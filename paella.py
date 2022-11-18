@@ -63,7 +63,7 @@ def train(proc_id, args):
         os.makedirs(f"results/{args.run_name}", exist_ok=True)
         os.makedirs(f"models/{args.run_name}", exist_ok=True)
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, total_stepss=args.total_steps, max_lr=lr, pct_start=0.1 if not args.finetune else 0.0, div_factor=25, final_div_factor=1 / 25, anneal_strategy='linear')
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, total_steps=args.total_steps, max_lr=lr, pct_start=0.1 if not args.finetune else 0.0, div_factor=25, final_div_factor=1 / 25, anneal_strategy='linear')
 
     if resume:
         if not proc_id and args.node_id == 0:
@@ -240,7 +240,7 @@ if __name__ == '__main__':
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 501_000
-    args.batch_size = 22
+    args.batch_size = 4 # 22
     args.image_size = 256
     args.num_workers = 10
     args.log_period = 5000
@@ -250,11 +250,11 @@ if __name__ == '__main__':
     args.log_captions = True
     args.finetune = False
 
-    args.n_nodes = 8
-    args.node_id = int(os.environ["SLURM_PROCID"])
-    args.devices = [0, 1, 2, 3, 4, 5, 6, 7]
+    args.n_nodes = 1
+    args.node_id = 0# int(os.environ["SLURM_PROCID"])
+    args.devices = [0] # [0, 1, 2, 3, 4, 5, 6, 7]
 
-    args.dataset_path = ""
+    args.dataset_path = "gigant/oldbookillustrations_2"
     print("Launching with args: ", args)
     launch(
         args
