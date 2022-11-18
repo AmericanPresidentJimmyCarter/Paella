@@ -155,7 +155,9 @@ class DenoiseUNet(nn.Module):
 
     def forward(self, x, c, r):  # r is a uniform value between 0 and 1
         r_embed = self.gen_r_embedding(r)
+        print('x before', x.size())
         x = self.embedding(x).permute(0, 3, 1, 2)
+        print('x after', x.size())
         if len(c.shape) == 2:
             s = torch.cat([c, r_embed], dim=-1)[:, :, None, None]
         else:

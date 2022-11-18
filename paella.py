@@ -94,14 +94,34 @@ def train(proc_id, args):
     if parallel:
         model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
-    pbar = tqdm(enumerate(dataset, start=start_step), total=args.total_steps, initial=start_step) if args.node_id == 0 and proc_id == 0 else enumerate(dataset, start=start_step)
+    # pbar = tqdm(
+    #     enumerate(dataset, start=start_step),
+    #     total=args.total_steps,
+    #     initial=start_step) \
+    #     if args.node_id == 0 and proc_id == 0 \
+    #     else enumerate(dataset, start=start_step)
     model.train()
-    for step, (images, captions) in pbar:
+    # iterator = enumerate(dataset, start=start_step)
+    pbar = tqdm(total=args.total_steps)
+    
+    batch_iterator = iter(dataset)
+    step = 0
+    while step < args.total_steps:
+        try:
+            images, captions = next(batch_iterator)
+        except StopIteration:
+            print('hit stop iteration')
+            batch_iterator = iter(dataset)
+            images, captions = next(batch_iterator)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            continue
         images = images.to(device)
         with torch.no_grad():
             image_indices = encode(vqmodel, images)
             r = torch.rand(images.size(0), device=device)
-            noised_indices, mask = model.module.add_noise(image_indices, r)
+            noised_indices, mask = model.add_noise(image_indices, r)
 
             if np.random.rand() < 0.1:  # 10% of the times -> unconditional training for classifier-free-guidance
                 text_embeddings = images.new_zeros(images.size(0), 1024)
@@ -153,13 +173,15 @@ def train(proc_id, args):
                 image_indices = image_indices[:10]
                 captions = captions[:10]
                 text_embeddings = text_embeddings[:10]
-                sampled = sample(model.module, c=text_embeddings)[-1]
+                sampled = sample(model, c=text_embeddings) # [-1]
                 sampled = decode(vqmodel, sampled)
                 recon_images = decode(vqmodel, image_indices)
 
                 if args.log_captions:
-                    cool_captions_data = torch.load("cool_captions.pth")
-                    cool_captions_text = cool_captions_data["captions"]
+                    # cool_captions_data = torch.load("cool_captions.pth")
+                    # cool_captions_text = cool_captions_data["captions"]
+                    cool_captions_text = ['a furry cat', 'a red ball',
+                        'a horse', 'a river bank at sunset']
 
                     text_tokens = tokenizer.tokenize(cool_captions_text)
                     text_tokens = text_tokens.to(device)
@@ -171,12 +193,12 @@ def train(proc_id, args):
                     st = time.time()
                     for caption_embedding in cool_captions:
                         caption_embedding = caption_embedding[0].float().to(device)
-                        sampled_text = sample(model.module, c=caption_embedding)[-1]
+                        sampled_text = sample(model, c=caption_embedding)# [-1]
                         sampled_text = decode(vqmodel, sampled_text)
-                        sampled_text_ema = decode(vqmodel, sampled_text_ema)
-                        for s, t in zip(sampled_text, sampled_text_ema):
+                        # sampled_text_ema = decode(vqmodel, sampled_text_ema)
+                        for s in sampled_text:
                             cool_captions_sampled.append(s.cpu())
-                            cool_captions_sampled_ema.append(t.cpu())
+                            # cool_captions_sampled_ema.append(t.cpu())
                     print(f"Took {time.time() - st} seconds to sample {len(cool_captions_text) * 2} captions.")
 
                     cool_captions_sampled = torch.stack(cool_captions_sampled)
@@ -185,11 +207,11 @@ def train(proc_id, args):
                         os.path.join(f"results/{args.run_name}", f"cool_captions_{step:03d}.png")
                     )
 
-                    cool_captions_sampled_ema = torch.stack(cool_captions_sampled_ema)
-                    torchvision.utils.save_image(
-                        torchvision.utils.make_grid(cool_captions_sampled_ema, nrow=11),
-                        os.path.join(f"results/{args.run_name}", f"cool_captions_{step:03d}_ema.png")
-                    )
+                    # cool_captions_sampled_ema = torch.stack(cool_captions_sampled_ema)
+                    # torchvision.utils.save_image(
+                    #     torchvision.utils.make_grid(cool_captions_sampled_ema, nrow=11),
+                    #     os.path.join(f"results/{args.run_name}", f"cool_captions_{step:03d}_ema.png")
+                    # )
 
                 log_images = torch.cat([
                     torch.cat([i for i in sampled.cpu()], dim=-1),
@@ -200,27 +222,29 @@ def train(proc_id, args):
             torchvision.utils.save_image(log_images, os.path.join(f"results/{args.run_name}", f"{step:03d}.png"))
 
             log_data = [[captions[i]] + [wandb.Image(sampled[i])] + [wandb.Image(images[i])] + [wandb.Image(recon_images[i])] for i in range(len(captions))]
-            log_table = wandb.Table(data=log_data, columns=["Caption", "Image", "EMA", "Orig", "Recon"])
+            log_table = wandb.Table(data=log_data, columns=["Caption", "Image", "Orig", "Recon"])
             wandb.log({"Log": log_table})
 
             if args.log_captions:
-                log_data_cool = [[cool_captions_text[i]] + [wandb.Image(cool_captions_sampled[i])] + [wandb.Image(cool_captions_sampled_ema[i])] for i in range(len(cool_captions_text))]
-                log_table_cool = wandb.Table(data=log_data_cool, columns=["Caption", "Image", "EMA Image"])
+                log_data_cool = [[cool_captions_text[i]] + [wandb.Image(cool_captions_sampled[i])] for i in range(len(cool_captions_text))]
+                log_table_cool = wandb.Table(data=log_data_cool, columns=["Caption", "Image"])
                 wandb.log({"Log Cool": log_table_cool})
                 del sampled_text, log_data_cool
 
             del sampled, log_data
 
             if step % args.extra_ckpt == 0:
-                torch.save(model.module.state_dict(), f"models/{args.run_name}/model_{step}.pt")
+                torch.save(model.state_dict(), f"models/{args.run_name}/model_{step}.pt")
                 torch.save(optimizer.state_dict(), f"models/{args.run_name}/model_{step}_optim.pt")
-            torch.save(model.module.state_dict(), f"models/{args.run_name}/model.pt")
+            torch.save(model.state_dict(), f"models/{args.run_name}/model.pt")
             torch.save(optimizer.state_dict(), f"models/{args.run_name}/optim.pt")
             torch.save({'step': step, 'losses': losses, 'accuracies': accuracies}, f"results/{args.run_name}/log.pt")
 
         del images, image_indices, r, text_embeddings
         del noised_indices, mask, pred, loss, loss_adjusted, acc
 
+        pbar.update(1)
+        step += 1
 
 def launch(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in args.devices])
@@ -240,10 +264,10 @@ if __name__ == '__main__':
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 501_000
-    args.batch_size = 4 # 22
+    args.batch_size = 16 # 22
     args.image_size = 256
     args.num_workers = 10
-    args.log_period = 5000
+    args.log_period = 1000 #5000
     args.extra_ckpt = 50_000
     args.accum_grad = 1
     args.num_codebook_vectors = 8192

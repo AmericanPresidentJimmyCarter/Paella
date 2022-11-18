@@ -3,13 +3,51 @@ import torchvision
 import webdataset as wds
 from torch.utils.data import DataLoader
 from webdataset.handlers import warn_and_continue
+from random import randrange
+import numpy as np
+import PIL
+import math
+
+TARGET_SIZE = 256
+
+def resize_image(img):
+    width, height = img.size   # Get dimensions
+
+    rz_w = width
+    rz_h = height
+    _m = max(width, height)
+    if _m == width:
+        rz_h = TARGET_SIZE
+        rz_w = math.floor((rz_w / rz_h) * TARGET_SIZE)
+    if _m == height:
+        rz_h = math.floor((rz_h / rz_w) * TARGET_SIZE)
+        rz_w = TARGET_SIZE
+    
+    img = img.resize((rz_w, rz_h), resample=PIL.Image.LANCZOS)
+
+    return img
+
+
+def crop_random(img):
+    img_size = img.size
+    x_max = img_size[0] - TARGET_SIZE
+    y_max = img_size[1] - TARGET_SIZE
+
+    random_x = randrange(0, x_max//2 + 1) * 2
+    random_y = randrange(0, y_max//2 + 1) * 2
+
+    area = (random_x, random_y, random_x + TARGET_SIZE, random_y + TARGET_SIZE)
+    c_img = img.crop(area)
+    return c_img
 
 
 def encode(vq, x):
+    print('econde', x.size())
     return vq.model.encode((2 * x - 1))[-1][-1]
 
 
 def decode(vq, z):
+    print('decode', z.size())
     return vq.decode(z.view(z.shape[0], -1))
 
 
@@ -88,7 +126,7 @@ class ProcessData:
         data["jpg"] = self.transforms(data["jpg"])
         return data
 
-
+'''
 def collate(batch):
     images = torch.stack([i[0] for i in batch], dim=0)
     captions = [i[1] for i in batch]
@@ -99,4 +137,29 @@ def get_dataloader(args):
     dataset = wds.WebDataset(args.dataset_path, resampled=True, handler=warn_and_continue).decode("rgb", handler=warn_and_continue).map(
         ProcessData(args.image_size), handler=warn_and_continue).to_tuple("jpg", "txt", handler=warn_and_continue).shuffle(690, handler=warn_and_continue)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=args.num_workers, collate_fn=collate)
+    return dataloader
+'''
+
+def preprocess(image):
+    w, h = image.size
+    w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
+    image = image.resize((w, h), resample=PIL.Image.LANCZOS)
+    image = np.array(image).astype(np.float32) / 255.0
+    image = image[None].transpose(0, 3, 1, 2)
+    image = torch.from_numpy(image)
+    # print('image', image.size())
+    return 2.0 * image - 1.0
+
+def collate(batch):
+    images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
+    captions = [i['image_alt'] if i.get('image_alt', None) is not None else
+        i.get('image_caption', '') for i in batch]
+    return [images, captions]
+
+
+def get_dataloader(args):
+    import datasets
+    dataset = datasets.load_dataset("gigant/oldbookillustrations_2", split="train")
+    dataloader = DataLoader(dataset, batch_size=args.batch_size,
+        num_workers=args.num_workers, collate_fn=collate)
     return dataloader
