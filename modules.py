@@ -23,11 +23,12 @@ class ModulatedLayerNorm(nn.Module):
 
 
 class ResBlock(nn.Module):
-    def __init__(self, c, c_hidden, c_cond=0, c_skip=0, scaler=None, layer_scale_init_value=1e-6):
+    def __init__(
+        self, c, c_hidden, c_cond=0, c_skip=0, scaler=None, layer_scale_init_value=1e-6
+    ):
         super().__init__()
         self.depthwise = nn.Sequential(
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(c, c, kernel_size=3, groups=c)
+            nn.ReflectionPad2d(1), nn.Conv2d(c, c, kernel_size=3, groups=c)
         )
         self.ln = ModulatedLayerNorm(c, channels_first=False)
         self.channelwise = nn.Sequential(
@@ -35,7 +36,11 @@ class ResBlock(nn.Module):
             nn.GELU(),
             nn.Linear(c_hidden, c),
         )
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones(c), requires_grad=True) if layer_scale_init_value > 0 else None
+        self.gamma = (
+            nn.Parameter(layer_scale_init_value * torch.ones(c), requires_grad=True)
+            if layer_scale_init_value > 0
+            else None
+        )
         self.scaler = scaler
         if c_cond > 0:
             self.cond_mapper = nn.Linear(c_cond, c)
@@ -47,7 +52,7 @@ class ResBlock(nn.Module):
             if s.size(2) == s.size(3) == 1:
                 s = s.expand(-1, -1, x.size(2), x.size(3))
             elif s.size(2) != x.size(2) or s.size(3) != x.size(3):
-                s = nn.functional.interpolate(s, size=x.shape[-2:], mode='bilinear')
+                s = nn.functional.interpolate(s, size=x.shape[-2:], mode="bilinear")
             s = self.cond_mapper(s.permute(0, 2, 3, 1))
             # s = self.cond_mapper(s.permute(0, 2, 3, 1))
             # if s.size(1) == s.size(2) == 1:
@@ -64,13 +69,21 @@ class ResBlock(nn.Module):
 
 
 class DenoiseUNet(nn.Module):
-    def __init__(self, num_labels, c_hidden=1280, c_clip=1024, c_r=64, down_levels=[4, 8, 16], up_levels=[16, 8, 4]):
+    def __init__(
+        self,
+        num_labels,
+        c_hidden=1280,
+        c_clip=1024,
+        c_r=64,
+        down_levels=[4, 8, 16],
+        up_levels=[16, 8, 4],
+    ):
         super().__init__()
         self.num_labels = num_labels
         self.c_r = c_r
         self.down_levels = down_levels
         self.up_levels = up_levels
-        c_levels = [c_hidden // (2 ** i) for i in reversed(range(len(down_levels)))]
+        c_levels = [c_hidden // (2**i) for i in reversed(range(len(down_levels)))]
         self.embedding = nn.Embedding(num_labels, c_levels[0])
 
         # DOWN BLOCKS
@@ -78,7 +91,11 @@ class DenoiseUNet(nn.Module):
         for i, num_blocks in enumerate(down_levels):
             blocks = []
             if i > 0:
-                blocks.append(nn.Conv2d(c_levels[i - 1], c_levels[i], kernel_size=4, stride=2, padding=1))
+                blocks.append(
+                    nn.Conv2d(
+                        c_levels[i - 1], c_levels[i], kernel_size=4, stride=2, padding=1
+                    )
+                )
             for _ in range(num_blocks):
                 block = ResBlock(c_levels[i], c_levels[i] * 4, c_clip + c_r)
                 block.channelwise[-1].weight.data *= np.sqrt(1 / sum(down_levels))
@@ -90,13 +107,24 @@ class DenoiseUNet(nn.Module):
         for i, num_blocks in enumerate(up_levels):
             blocks = []
             for j in range(num_blocks):
-                block = ResBlock(c_levels[len(c_levels) - 1 - i], c_levels[len(c_levels) - 1 - i] * 4, c_clip + c_r,
-                                 c_levels[len(c_levels) - 1 - i] if (j == 0 and i > 0) else 0)
+                block = ResBlock(
+                    c_levels[len(c_levels) - 1 - i],
+                    c_levels[len(c_levels) - 1 - i] * 4,
+                    c_clip + c_r,
+                    c_levels[len(c_levels) - 1 - i] if (j == 0 and i > 0) else 0,
+                )
                 block.channelwise[-1].weight.data *= np.sqrt(1 / sum(up_levels))
                 blocks.append(block)
             if i < len(up_levels) - 1:
                 blocks.append(
-                    nn.ConvTranspose2d(c_levels[len(c_levels) - 1 - i], c_levels[len(c_levels) - 2 - i], kernel_size=4, stride=2, padding=1))
+                    nn.ConvTranspose2d(
+                        c_levels[len(c_levels) - 1 - i],
+                        c_levels[len(c_levels) - 2 - i],
+                        kernel_size=4,
+                        stride=2,
+                        padding=1,
+                    )
+                )
             self.up_blocks.append(nn.ModuleList(blocks))
 
         self.clf = nn.Conv2d(c_levels[0], num_labels, kernel_size=1)
@@ -106,7 +134,9 @@ class DenoiseUNet(nn.Module):
 
     def add_noise(self, x, r, random_x=None):
         r = self.gamma(r)[:, None, None]
-        mask = torch.bernoulli(r * torch.ones_like(x), )
+        mask = torch.bernoulli(
+            r * torch.ones_like(x),
+        )
         mask = mask.round().long()
         if random_x is None:
             random_x = torch.randint_like(x, 0, self.num_labels)
@@ -122,7 +152,7 @@ class DenoiseUNet(nn.Module):
         emb = r[:, None] * emb[None, :]
         emb = torch.cat([emb.sin(), emb.cos()], dim=1)
         if self.c_r % 2 == 1:  # zero pad
-            emb = nn.functional.pad(emb, (0, 1), mode='constant')
+            emb = nn.functional.pad(emb, (0, 1), mode="constant")
         return emb.to(dtype)
 
     def _down_encode_(self, x, s):
@@ -155,9 +185,7 @@ class DenoiseUNet(nn.Module):
 
     def forward(self, x, c, r):  # r is a uniform value between 0 and 1
         r_embed = self.gen_r_embedding(r)
-        print('x before', x.size())
         x = self.embedding(x).permute(0, 3, 1, 2)
-        print('x after', x.size())
         if len(c.shape) == 2:
             s = torch.cat([c, r_embed], dim=-1)[:, :, None, None]
         else:
@@ -169,7 +197,7 @@ class DenoiseUNet(nn.Module):
         return x
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     device = "cuda"
     model = DenoiseUNet(1024).to(device)
     print(sum([p.numel() for p in model.parameters()]))
@@ -177,4 +205,3 @@ if __name__ == '__main__':
     c = torch.randn((1, 1024)).to(device)
     r = torch.rand(1).to(device)
     model(x, c, r)
-

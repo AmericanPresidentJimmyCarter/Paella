@@ -1,0 +1,11 @@
+wandb
+torch
+torchvision
+numpy
+tqdm
+wandb
+git+https://github.com/mlfoundations/open_clip@v2.6.1
+Pillow
+datasets
+accelerate
+rudalle

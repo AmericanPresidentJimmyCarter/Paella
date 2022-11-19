@@ -1,8 +1,6 @@
 import torch
 import torchvision
-import webdataset as wds
 from torch.utils.data import DataLoader
-from webdataset.handlers import warn_and_continue
 from random import randrange
 import numpy as np
 import PIL
@@ -126,19 +124,6 @@ class ProcessData:
         data["jpg"] = self.transforms(data["jpg"])
         return data
 
-'''
-def collate(batch):
-    images = torch.stack([i[0] for i in batch], dim=0)
-    captions = [i[1] for i in batch]
-    return [images, captions]
-
-
-def get_dataloader(args):
-    dataset = wds.WebDataset(args.dataset_path, resampled=True, handler=warn_and_continue).decode("rgb", handler=warn_and_continue).map(
-        ProcessData(args.image_size), handler=warn_and_continue).to_tuple("jpg", "txt", handler=warn_and_continue).shuffle(690, handler=warn_and_continue)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, num_workers=args.num_workers, collate_fn=collate)
-    return dataloader
-'''
 
 def preprocess(image):
     w, h = image.size
@@ -149,6 +134,7 @@ def preprocess(image):
     image = torch.from_numpy(image)
     # print('image', image.size())
     return 2.0 * image - 1.0
+
 
 def collate(batch):
     images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
