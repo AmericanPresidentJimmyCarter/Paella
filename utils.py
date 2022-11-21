@@ -1,12 +1,14 @@
 import torch
 import torchvision
 from torch.utils.data import DataLoader
-from random import randrange
+from random import randrange, seed
 import numpy as np
 import PIL
 import math
 
-TARGET_SIZE = 256
+TARGET_SIZE = 384
+
+seed(12345)
 
 def resize_image(img):
     width, height = img.size   # Get dimensions
@@ -15,8 +17,8 @@ def resize_image(img):
     rz_h = height
     _m = max(width, height)
     if _m == width:
-        rz_h = TARGET_SIZE
         rz_w = math.floor((rz_w / rz_h) * TARGET_SIZE)
+        rz_h = TARGET_SIZE
     if _m == height:
         rz_h = math.floor((rz_h / rz_w) * TARGET_SIZE)
         rz_w = TARGET_SIZE
@@ -61,8 +63,23 @@ def gumbel_noise(t):
 def gumbel_sample(t, temperature=1., dim=-1):
     return ((t / max(temperature, 1e-10)) + gumbel_noise(t)).argmax(dim=dim)
 
-
-def sample(model, c, x=None, mask=None, T=12, size=(32, 32), starting_t=0, temp_range=[1.0, 1.0], typical_filtering=True, typical_mass=0.2, typical_min_tokens=1, classifier_free_scale=-1, renoise_steps=11, renoise_mode='start'):
+def sample(
+    model,
+    c,
+    x=None,
+    mask=None,
+    T=12,
+    size=(TARGET_SIZE // 8, TARGET_SIZE // 8),
+    starting_t=0,
+    temp_range=[1.0, 1.0],
+    typical_filtering=True,
+    typical_mass=0.2,
+    typical_min_tokens=1,
+    classifier_free_scale=-1,
+    renoise_steps=11,
+    renoise_mode='start',
+    c_full=None,
+):
     with torch.inference_mode():
         r_range = torch.linspace(0, 1, T+1)[:-1][:, None].expand(-1, c.size(0)).to(c.device)
         temperatures = torch.linspace(temp_range[0], temp_range[1], T)
@@ -76,9 +93,10 @@ def sample(model, c, x=None, mask=None, T=12, size=(32, 32), starting_t=0, temp_
             if renoise_mode == 'prev':
                 prev_x = x.clone()
             r, temp = r_range[i], temperatures[i]
-            logits = model(x, c, r)
+            print(x.size(), c.size(), r.size(), c_full.size())
+            logits = model(x, c, r, c_full)
             if classifier_free_scale >= 0:
-                logits_uncond = model(x, torch.zeros_like(c), r)
+                logits_uncond = model(x, torch.zeros_like(c), r, torch.zeros_like(c_full))
                 logits = torch.lerp(logits_uncond, logits, classifier_free_scale)
             x = logits
             x_flat = x.permute(0, 2, 3, 1).reshape(-1, x.size(1))
@@ -113,7 +131,7 @@ def sample(model, c, x=None, mask=None, T=12, size=(32, 32), starting_t=0, temp_
 
 
 class ProcessData:
-    def __init__(self, image_size=256):
+    def __init__(self, image_size=TARGET_SIZE):
         self.transforms = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
             torchvision.transforms.Resize(image_size),
@@ -136,7 +154,14 @@ def preprocess(image):
     return 2.0 * image - 1.0
 
 
-def collate(batch):
+def collate_oldbookillustrations_2(batch):
+    images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
+    captions = [i['image_alt'] if i.get('image_alt', None) is not None else
+        i.get('image_caption', '') for i in batch]
+    return [images, captions]
+
+
+def collate_laion_coco(batch):
     images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
     captions = [i['image_alt'] if i.get('image_alt', None) is not None else
         i.get('image_caption', '') for i in batch]
@@ -145,7 +170,13 @@ def collate(batch):
 
 def get_dataloader(args):
     import datasets
-    dataset = datasets.load_dataset("gigant/oldbookillustrations_2", split="train")
+    dataset = datasets.load_dataset(args.dataset_path, split="train")
+
+    # for gigant/oldbookillustrations_2
     dataloader = DataLoader(dataset, batch_size=args.batch_size,
-        num_workers=args.num_workers, collate_fn=collate)
+        num_workers=args.num_workers,
+        collate_fn=collate_oldbookillustrations_2)
+
+    # for laion/laion-coco
+    
     return dataloader

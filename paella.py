@@ -11,11 +11,30 @@ import numpy as np
 import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
+from t5 import FrozenT5Embedder
 from modules import DenoiseUNet
 from utils import get_dataloader, sample, encode, decode
 import open_clip
 from open_clip import tokenizer
 from rudalle import get_vae
+
+
+def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
+    '''
+    Get the CLIP embedding before feature extraction/normalization.
+
+    TODO Alter the unet to use this instead of the final squished embedding.
+    '''
+    cast_dtype = model.transformer.get_cast_dtype()
+
+    x = model.token_embedding(text_tokens).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
+    x = x + model.positional_embedding.to(cast_dtype)
+    x = x.permute(1, 0, 2)  # NLD -> LND
+    x = model.transformer(x, attn_mask=model.attn_mask)
+    x = x.permute(1, 0, 2)  # LND -> NLD
+    x = model.ln_final(x)  # [batch_size, n_ctx, transformer.width]
+    return x
 
 
 def train(proc_id, args):
@@ -59,7 +78,7 @@ def train(proc_id, args):
         )
         torch.set_num_threads(6)
 
-    model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=1024).to(device)
+    model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
 
     if not proc_id and args.node_id == 0:
         print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
@@ -69,6 +88,7 @@ def train(proc_id, args):
     )
     del clip_model.visual
     clip_model = clip_model.to(device).eval().requires_grad_(False)
+    t5_model = FrozenT5Embedder(device='cpu')
 
     lr = 3e-4
     dataset = get_dataloader(args)
@@ -158,13 +178,22 @@ def train(proc_id, args):
             if (
                 np.random.rand() < 0.1
             ):  # 10% of the times -> unconditional training for classifier-free-guidance
-                text_embeddings = images.new_zeros(images.size(0), 1024)
+                text_embeddings = images.new_zeros(images.size(0), 2048)
+                text_embeddings_full = images.new_zeros(images.size(0), 154, 1024)
+                # text_embeddings = images.new_zeros(images.size(0), 77, 1024)
             else:
                 text_tokens = tokenizer.tokenize(captions)
                 text_tokens = text_tokens.to(device)
-                text_embeddings = clip_model.encode_text(text_tokens).float()
+                clip_embeddings = clip_model.encode_text(text_tokens).float()
+                clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float()
+                t5_embeddings_full = t5_model(captions).to(device)
+                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
 
-        pred = model(noised_indices, text_embeddings, r)
+                # text_embeddings = generate_clip_embeddings(clip_model, text_tokens)
+
+        print('text embeds', noised_indices.size(), text_embeddings.size(), r.size(), text_embeddings_full.size())
+        pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         loss = criterion(pred, image_indices)
         loss_adjusted = loss / args.accum_grad
 
@@ -209,38 +238,45 @@ def train(proc_id, args):
                 image_indices = image_indices[:10]
                 captions = captions[:10]
                 text_embeddings = text_embeddings[:10]
-                sampled = sample(model, c=text_embeddings)  # [-1]
+                text_embeddings_full = text_embeddings_full[:10]
+                sampled = sample(model, c=text_embeddings,
+                    c_full=text_embeddings_full)  # [-1]
                 sampled = decode(vqmodel, sampled)
                 recon_images = decode(vqmodel, image_indices)
 
                 if args.log_captions:
                     # cool_captions_data = torch.load("cool_captions.pth")
                     # cool_captions_text = cool_captions_data["captions"]
-                    cool_captions_text = [
-                        "a furry cat",
-                        "a red ball",
-                        "a horse",
-                        "a river bank at sunset",
-                    ]
+                    cool_captions_text = args.cool_captions_text
 
                     text_tokens = tokenizer.tokenize(cool_captions_text)
                     text_tokens = text_tokens.to(device)
-                    cool_captions_embeddings = clip_model.encode_text(
+                    clip_embeddings = clip_model.encode_text(
                         text_tokens
                     ).float()
+                    clip_embeddings_full = generate_clip_embeddings(
+                        clip_model, text_tokens).float()
+                    t5_embeddings_full = t5_model(cool_captions_text).to(device)
+                    cool_captions_embeddings = torch.cat(
+                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                    cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
+                        t5_embeddings_full], 1)
+
+                    # cool_captions_embeddings = generate_clip_embeddings(clip_model,
+                    #     text_tokens)
 
                     cool_captions = DataLoader(
                         TensorDataset(
                             cool_captions_embeddings.repeat_interleave(n, dim=0)
                         ),
-                        batch_size=11,
+                        batch_size=len(args.cool_captions_text),
                     )
                     cool_captions_sampled = []
-                    cool_captions_sampled_ema = []
                     st = time.time()
                     for caption_embedding in cool_captions:
                         caption_embedding = caption_embedding[0].float().to(device)
-                        sampled_text = sample(model, c=caption_embedding)  # [-1]
+                        sampled_text = sample(model, c=caption_embedding,
+                            c_full=cool_captions_embeddings_full)  # [-1]
                         sampled_text = decode(vqmodel, sampled_text)
                         # sampled_text_ema = decode(vqmodel, sampled_text_ema)
                         for s in sampled_text:
@@ -342,21 +378,35 @@ if __name__ == "__main__":
     args.run_name = "run_name"
     args.model = "UNet"
     args.dataset_type = "webdataset"
-    args.total_steps = 501_000
-    args.batch_size = 16  # 22
-    args.image_size = 256
+    args.total_steps = 100_000
+    args.batch_size = 1  # 22
+    args.image_size = 384
     args.num_workers = 10
     args.log_period = 1000  # 5000
-    args.extra_ckpt = 50_000
+    args.extra_ckpt = 10_000
     args.accum_grad = 1
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
+    args.cool_captions_text = [
+        "a furry cat",
+        "a red ball",
+        "a horse",
+        "a river bank at sunset",
+        "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
+        "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
+        "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
+        "While on the road to the market-place, the clown is stopped by Autolycus, who, while pretending to be defenseless and hurt, picks the clown’s pocket.",
+        "Tybalt, a Capulet, comes looking for Romeo, angry that he came to the party.",
+        "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
+    ]
 
     args.n_nodes = 1
     args.node_id = 0  # int(os.environ["SLURM_PROCID"])
     args.devices = [0]  # [0, 1, 2, 3, 4, 5, 6, 7]
 
+    # Testing:
     args.dataset_path = "gigant/oldbookillustrations_2"
+    # args.dataset_path = "laion/laion-coco"
     print("Launching with args: ", args)
     launch(args)
