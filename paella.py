@@ -17,6 +17,7 @@ from utils import get_dataloader, sample, encode, decode
 import open_clip
 from open_clip import tokenizer
 from rudalle import get_vae
+from ema import ModelEma
 
 
 def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
@@ -79,6 +80,10 @@ def train(proc_id, args):
         torch.set_num_threads(6)
 
     model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
+    model_ema = None
+    if args.ema:
+        model_ema = ModelEma(model=model, decay=args.ema_decay, device=device,
+            ema_model_path=args.ema_model_path)
 
     if not proc_id and args.node_id == 0:
         print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
@@ -88,7 +93,7 @@ def train(proc_id, args):
     )
     del clip_model.visual
     clip_model = clip_model.to(device).eval().requires_grad_(False)
-    t5_model = FrozenT5Embedder(device='cpu')
+    t5_model = FrozenT5Embedder(device=device).to(device)
 
     lr = 3e-4
     dataset = get_dataloader(args)
@@ -186,16 +191,16 @@ def train(proc_id, args):
                 text_tokens = text_tokens.to(device)
                 clip_embeddings = clip_model.encode_text(text_tokens).float()
                 clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float()
-                t5_embeddings_full = t5_model(captions).to(device)
+                t5_embeddings_full = t5_model(captions)
                 text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
                 text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
 
                 # text_embeddings = generate_clip_embeddings(clip_model, text_tokens)
 
-        print('text embeds', noised_indices.size(), text_embeddings.size(), r.size(), text_embeddings_full.size())
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         loss = criterion(pred, image_indices)
         loss_adjusted = loss / args.accum_grad
+
 
         loss_adjusted.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
@@ -223,6 +228,13 @@ def train(proc_id, args):
             pbar.set_postfix(log)
             wandb.log(log)
 
+        if model_ema is not None and args.node_id == 0 and proc_id == 0 and \
+            step % args.ema_update_steps == 0:
+            print(
+                f"EMA weights are being updated ({step=})"
+            )
+            model_ema.update(model)
+
         if args.node_id == 0 and proc_id == 0 and step % args.log_period == 0:
             print(
                 f"Step {step} - loss {total_loss / (step + 1)} - acc {total_acc / (step + 1)} - ppx {np.exp(total_loss / (step + 1))}"
@@ -234,11 +246,11 @@ def train(proc_id, args):
             model.eval()
             with torch.no_grad():
                 n = 1
-                images = images[:10]
-                image_indices = image_indices[:10]
-                captions = captions[:10]
-                text_embeddings = text_embeddings[:10]
-                text_embeddings_full = text_embeddings_full[:10]
+                images = images[:args.comparison_samples]
+                image_indices = image_indices[:args.comparison_samples]
+                captions = captions[:args.comparison_samples]
+                text_embeddings = text_embeddings[:args.comparison_samples]
+                text_embeddings_full = text_embeddings_full[:args.comparison_samples]
                 sampled = sample(model, c=text_embeddings,
                     c_full=text_embeddings_full)  # [-1]
                 sampled = decode(vqmodel, sampled)
@@ -256,7 +268,7 @@ def train(proc_id, args):
                     ).float()
                     clip_embeddings_full = generate_clip_embeddings(
                         clip_model, text_tokens).float()
-                    t5_embeddings_full = t5_model(cool_captions_text).to(device)
+                    t5_embeddings_full = t5_model(cool_captions_text)
                     cool_captions_embeddings = torch.cat(
                         [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
                     cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
@@ -384,20 +396,23 @@ if __name__ == "__main__":
     args.num_workers = 10
     args.log_period = 1000  # 5000
     args.extra_ckpt = 10_000
+    args.ema = True
+    args.ema_decay = 0.9999
+    args.ema_update_steps = 20_000
+    args.ema_model_path = 'ema_weights.ckpt'
     args.accum_grad = 1
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
+    args.comparison_samples = 8
     args.cool_captions_text = [
         "a furry cat",
-        "a red ball",
+        "a painting of a clown",
         "a horse",
         "a river bank at sunset",
         "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
         "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
         "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
-        "While on the road to the market-place, the clown is stopped by Autolycus, who, while pretending to be defenseless and hurt, picks the clown’s pocket.",
-        "Tybalt, a Capulet, comes looking for Romeo, angry that he came to the party.",
         "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
 

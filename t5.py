@@ -18,7 +18,7 @@ class FrozenT5Embedder(AbstractEncoder):
         self.tokenizer = T5Tokenizer.from_pretrained(version)
         self.transformer = T5EncoderModel.from_pretrained(version)
         self.device = device
-        self.max_length = max_length   # TODO: typical value?
+        self.max_length = max_length # TODO: typical value?
         self.freeze()
 
     def freeze(self):
