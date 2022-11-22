@@ -83,9 +83,8 @@ def train(proc_id, args):
     if not proc_id and args.node_id == 0:
         print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
 
-    clip_model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-g-14", pretrained="laion2b_s12b_b42k"
-    )
+    clip_model, _, _ = open_clip.create_model_and_transforms('ViT-H-14',
+        pretrained='laion2b_s32b_b79k')
     del clip_model.visual
     clip_model = clip_model.to(device).eval().half().requires_grad_(False)
     t5_model = FrozenT5Embedder(device=device).to(device)
