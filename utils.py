@@ -5,6 +5,9 @@ from random import randrange, seed
 import numpy as np
 import PIL
 import math
+from PIL import Image
+import requests
+from io import BytesIO
 
 TARGET_SIZE = 384
 
@@ -22,6 +25,11 @@ def resize_image(img):
     if _m == height:
         rz_h = math.floor((rz_h / rz_w) * TARGET_SIZE)
         rz_w = TARGET_SIZE
+
+    if rz_w < TARGET_SIZE:
+        rz_w = TARGET_SIZE
+    if rz_h < TARGET_SIZE:
+        rz_h = TARGET_SIZE
     
     img = img.resize((rz_w, rz_h), resample=PIL.Image.LANCZOS)
 
@@ -161,21 +169,31 @@ def collate_oldbookillustrations_2(batch):
 
 
 def collate_laion_coco(batch):
-    images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
-    captions = [i['image_alt'] if i.get('image_alt', None) is not None else
-        i.get('image_caption', '') for i in batch]
+    images_pil = []
+    for i in batch:
+        resp = requests.get(i['URL'])
+        img = Image.open(BytesIO(resp.content))
+        images_pil.append(img)
+    
+    images = torch.cat([preprocess(crop_random(resize_image(i))) for i in images_pil], 0)
+    captions = [i['top_caption'] if i.get('top_caption', None) is not None else
+        i.get('TEXT', '') for i in batch]
     return [images, captions]
 
 
 def get_dataloader(args):
     import datasets
-    dataset = datasets.load_dataset(args.dataset_path, split="train")
-
     # for gigant/oldbookillustrations_2
-    dataloader = DataLoader(dataset, batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        collate_fn=collate_oldbookillustrations_2)
+    # dataset = datasets.load_dataset(args.dataset_path, split="train")
+    # dataloader = DataLoader(dataset, batch_size=args.batch_size,
+    #     num_workers=args.num_workers,
+    #     collate_fn=collate_oldbookillustrations_2)
 
     # for laion/laion-coco
+    dataset = datasets.load_dataset(args.dataset_path, split="train",
+        streaming=True)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        collate_fn=collate_laion_coco)
     
     return dataloader

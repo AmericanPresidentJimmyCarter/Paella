@@ -12,3 +12,4 @@ rudalle
 einops
 transformers
 sentencepiece
+cython
