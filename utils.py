@@ -189,6 +189,17 @@ def collate_laion_coco(batch):
     return [images, captions] 
 
 
+def filter_dataset(item):
+    if 'TEXT' not in item or 'top_caption' not in item or \
+        'all_captions' not in item:
+        return False
+    if 'jpg' not in item:
+        return False
+    if 'json' not in item:
+        return False
+    return True
+
+
 def get_dataloader(args):
     # import datasets
     # for gigant/oldbookillustrations_2
@@ -208,9 +219,10 @@ def get_dataloader(args):
             ProcessData(args.image_size),
             handler=warn_and_continue,
         ) \
-        .to_tuple("jpg", "txt", handler=warn_and_continue) \
         .shuffle(690, handler=warn_and_continue)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size,
+    filtered_dataset = dataset.select(filter_dataset)
+
+    dataloader = DataLoader(filtered_dataset, batch_size=args.batch_size,
         num_workers=args.num_workers,
         collate_fn=collate_laion_coco)
     
