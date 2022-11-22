@@ -394,6 +394,7 @@ if __name__ == "__main__":
     args.dataset_type = "webdataset"
     args.total_steps = 100_000
     args.batch_size = 4  # 22
+    # Be sure to sync with TARGET_SIZE in util
     args.image_size = 512
     args.num_workers = 10
     args.log_period = 1000  # 5000

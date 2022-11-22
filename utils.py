@@ -11,7 +11,7 @@ from io import BytesIO
 import webdataset
 from webdataset.handlers import warn_and_continue
 
-TARGET_SIZE = 384
+TARGET_SIZE = 512
 
 seed(12345)
 
