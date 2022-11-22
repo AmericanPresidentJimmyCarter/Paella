@@ -232,9 +232,10 @@ def train(proc_id, args):
         if model_ema is not None and args.node_id == 0 and proc_id == 0 and \
             step % args.ema_update_steps == 0:
             print(
-                f"EMA weights are being updated ({step=})"
+                f"EMA weights are being updated and saved ({step=})"
             )
             model_ema.update(model)
+            torch.save(model_ema.module, args.ema_model_path)
 
         if args.node_id == 0 and proc_id == 0 and step % args.log_period == 0:
             print(

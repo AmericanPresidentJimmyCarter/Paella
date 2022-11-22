@@ -151,8 +151,7 @@ def preprocess(image):
     image = image[None].transpose(0, 3, 1, 2)
     image = torch.from_numpy(image)
     # print('image', image.size())
-    return 2.0 * image - 1.0
-
+    return image
 
 def collate_oldbookillustrations_2(batch):
     images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
