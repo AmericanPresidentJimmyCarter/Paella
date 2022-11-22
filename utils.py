@@ -8,6 +8,8 @@ import math
 from PIL import Image
 import requests
 from io import BytesIO
+import webdataset
+from webdataset.handlers import warn_and_continue
 
 TARGET_SIZE = 384
 
@@ -168,21 +170,27 @@ def collate_oldbookillustrations_2(batch):
     return [images, captions]
 
 
+class ProcessDataLaionCoco:
+    def __init__(self):
+        self.transforms = lambda img: preprocess(crop_random(resize_image(img)))
+
+    def __call__(self, data):
+        data["jpg"] = self.transforms(data["jpg"])
+        return data
+
+
 def collate_laion_coco(batch):
-    images_pil = []
-    for i in batch:
-        resp = requests.get(i['URL'])
-        img = Image.open(BytesIO(resp.content))
-        images_pil.append(img)
-    
-    images = torch.cat([preprocess(crop_random(resize_image(i))) for i in images_pil], 0)
-    captions = [i['top_caption'] if i.get('top_caption', None) is not None else
-        i.get('TEXT', '') for i in batch]
-    return [images, captions]
+    # images = torch.cat([preprocess(crop_random(resize_image(i))) for i in batch], 0)
+    # captions = [i['top_caption'] if i.get('top_caption', None) is not None else
+    #     i.get('TEXT', '') for i in batch]
+    # return [images, captions]
+    images = torch.stack([i[0] for i in batch], dim=0)
+    captions = [i[1] for i in batch]
+    return [images, captions] 
 
 
 def get_dataloader(args):
-    import datasets
+    # import datasets
     # for gigant/oldbookillustrations_2
     # dataset = datasets.load_dataset(args.dataset_path, split="train")
     # dataloader = DataLoader(dataset, batch_size=args.batch_size,
@@ -190,8 +198,18 @@ def get_dataloader(args):
     #     collate_fn=collate_oldbookillustrations_2)
 
     # for laion/laion-coco
-    dataset = datasets.load_dataset(args.dataset_path, split="train",
-        streaming=True)
+    dataset = webdataset.WebDataset(
+        args.dataset_path,
+        resampled=True,
+        handler=warn_and_continue,
+    ) \
+        .decode("rgb", handler=warn_and_continue) \
+        .map(
+            ProcessData(args.image_size),
+            handler=warn_and_continue,
+        ) \
+        .to_tuple("jpg", "txt", handler=warn_and_continue) \
+        .shuffle(690, handler=warn_and_continue)
     dataloader = DataLoader(dataset, batch_size=args.batch_size,
         num_workers=args.num_workers,
         collate_fn=collate_laion_coco)

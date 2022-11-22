@@ -87,7 +87,7 @@ def train(proc_id, args):
         "ViT-g-14", pretrained="laion2b_s12b_b42k"
     )
     del clip_model.visual
-    clip_model = clip_model.to(device).eval().requires_grad_(False)
+    clip_model = clip_model.to(device).eval().half().requires_grad_(False)
     t5_model = FrozenT5Embedder(device=device).to(device)
 
     lr = 3e-4
@@ -393,34 +393,34 @@ if __name__ == "__main__":
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 100_000
-    args.batch_size = 1  # 22
-    args.image_size = 384
+    args.batch_size = 4  # 22
+    args.image_size = 512
     args.num_workers = 10
     args.log_period = 1000  # 5000
-    args.extra_ckpt = 10_000
+    args.extra_ckpt = 100_000
     args.ema = True
     args.ema_decay = 0.9999
-    args.ema_update_steps = 20_000
+    args.ema_update_steps = 100_000
     args.ema_model_path = 'ema_weights.ckpt'
     args.accum_grad = 1
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
-    args.comparison_samples = 8
+    args.comparison_samples = 2 # 8
     args.cool_captions_text = [
-        "a furry cat",
+        "a cat is sleeping",
         "a painting of a clown",
-        "a horse",
-        "a river bank at sunset",
-        "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
-        "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
-        "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
-        "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
+        # "a horse",
+        # "a river bank at sunset",
+        # "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
+        # "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
+        # "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
+        # "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
 
     args.n_nodes = 1
     args.node_id = 0  # int(os.environ["SLURM_PROCID"])
-    args.devices = [0, 1]  # [0, 1, 2, 3, 4, 5, 6, 7]
+    args.devices = [0]  # [0, 1, 2, 3, 4, 5, 6, 7]
 
     # Testing:
     # args.dataset_path = "gigant/oldbookillustrations_2"

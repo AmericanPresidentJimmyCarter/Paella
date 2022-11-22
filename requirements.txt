@@ -13,3 +13,4 @@ einops
 transformers
 sentencepiece
 cython
+webdataset
