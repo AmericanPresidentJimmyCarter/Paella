@@ -1,4 +1,3 @@
-import math
 import os
 import torch
 from torch.utils.data import TensorDataset, DataLoader
@@ -73,17 +72,13 @@ def train(proc_id, args):
         torch.backends.cudnn.benchmark = True
         dist.init_process_group(
             backend="nccl",
-            init_method="file://dist_file",
+            init_method="file:///data/dist_file",
             world_size=args.n_nodes * len(args.devices),
             rank=proc_id + len(args.devices) * args.node_id,
         )
         torch.set_num_threads(6)
 
     model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
-    model_ema = None
-    if args.ema:
-        model_ema = ModelEma(model=model, decay=args.ema_decay, device=device,
-            ema_model_path=args.ema_model_path)
 
     if not proc_id and args.node_id == 0:
         print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
@@ -149,6 +144,12 @@ def train(proc_id, args):
         model = DistributedDataParallel(
             model, device_ids=[device], output_device=device
         )
+        model = model.module
+
+    model_ema = None
+    if args.ema:
+        model_ema = ModelEma(model=model, decay=args.ema_decay, device=device,
+            ema_model_path=args.ema_model_path)
 
     # pbar = tqdm(
     #     enumerate(dataset, start=start_step),
@@ -418,7 +419,7 @@ if __name__ == "__main__":
 
     args.n_nodes = 1
     args.node_id = 0  # int(os.environ["SLURM_PROCID"])
-    args.devices = [0]  # [0, 1, 2, 3, 4, 5, 6, 7]
+    args.devices = [0, 1]  # [0, 1, 2, 3, 4, 5, 6, 7]
 
     # Testing:
     args.dataset_path = "gigant/oldbookillustrations_2"
