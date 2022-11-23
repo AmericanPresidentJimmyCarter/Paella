@@ -1,7 +1,7 @@
 import torch
 import torchvision
 from torch.utils.data import DataLoader
-from random import randrange, seed
+from random import choice, randrange, seed
 import numpy as np
 import PIL
 import math
@@ -163,6 +163,7 @@ def preprocess(image):
     # print('image', image.size())
     return image
 
+
 def collate_oldbookillustrations_2(batch):
     images = torch.cat([preprocess(crop_random(resize_image(i['1600px']))) for i in batch], 0)
     captions = [i['image_alt'] if i.get('image_alt', None) is not None else
@@ -174,35 +175,77 @@ class ProcessDataLaionCoco:
     def __init__(self):
         self.transforms = lambda img: preprocess(crop_random(resize_image(img)))
 
-    def __call__(self, data):
-        data["jpg"] = self.transforms(data["jpg"])
-        return data
+    def __call__(self, item,
+        image_key="jpg",
+        caption_key="txt",
+        caption_keys=["top_caption", "all_captions"],
+    ):
+        output = {}
+
+        image_data = item[image_key]
+
+        output["image_filename"] = item["__key__"]
+        image_data = item[image_key]
+        image = Image.open(BytesIO(image_data))
+        output["jpg"] = self.transforms(image)
+
+        # list of txt + top_caption + all_captions
+        captions = [item[caption_key]] + [item[caption_keys[1]]] + \
+            item[caption_keys[2]]
+        text = choice(captions)
+
+        # Do we need this?? Why is text in bytes? Does all_captions need to be
+        # decoded and json parsed first?
+        caption = text.decode("utf-8")
+        output["txt"] = caption # text 
+
+        metadata_file = item["json"]
+        metadata = metadata_file.decode("utf-8")
+        output["metadata"] = metadata
+
+        return output
 
 
 def collate_laion_coco(batch):
-    # images = torch.cat([preprocess(crop_random(resize_image(i))) for i in batch], 0)
-    # captions = [i['top_caption'] if i.get('top_caption', None) is not None else
-    #     i.get('TEXT', '') for i in batch]
-    # return [images, captions]
-    images = torch.stack([i[0] for i in batch], dim=0)
-    captions = [i[1] for i in batch]
-    return [images, captions] 
+    images = torch.stack([i['jpg'] for i in batch], dim=0)
+    captions = [i['txt'] for i in batch]
+    return [images, captions]
 
 
-def filter_dataset(item):
-    if 'TEXT' not in item or 'top_caption' not in item or \
-        'all_captions' not in item:
+def filter_laion_coco_dataset(item,
+    image_key="jpg",
+    caption_key="txt",
+    caption_keys=["top_caption", "all_captions"],
+    punsafe_key='punsafe',
+    height_key='HEIGHT',
+    width_key='WIDTH',
+):
+    if "json" not in item or caption_key not in item or image_key not in item:
         return False
-    if 'jpg' not in item:
-        return False
-    if 'json' not in item:
-        return False
+    else:
+        if height_key not in item["json"]:
+            return False
+        if item["json"][height_key] < TARGET_SIZE:
+            return False
+        if width_key not in item["json"]:
+            return False
+        if item["json"][width_key] < TARGET_SIZE:
+            return False
+        if punsafe_key not in item["json"]:
+            return False
+        if item["json"][punsafe_key] > 0.7:
+            return False
+        for c_k in caption_keys:
+            if c_k not in item["json"].keys():
+                return False
+
     return True
 
 
 def get_dataloader(args):
-    # import datasets
     # for gigant/oldbookillustrations_2
+    #
+    # import datasets
     # dataset = datasets.load_dataset(args.dataset_path, split="train")
     # dataloader = DataLoader(dataset, batch_size=args.batch_size,
     #     num_workers=args.num_workers,
@@ -215,15 +258,18 @@ def get_dataloader(args):
         handler=warn_and_continue,
     ) \
         .decode("rgb", handler=warn_and_continue) \
+        .select(filter_laion_coco_dataset) \
         .map(
             ProcessData(args.image_size),
             handler=warn_and_continue,
         ) \
         .shuffle(690, handler=warn_and_continue)
-    filtered_dataset = dataset.select(filter_dataset)
 
-    dataloader = DataLoader(filtered_dataset, batch_size=args.batch_size,
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
         num_workers=args.num_workers,
-        collate_fn=collate_laion_coco)
+        collate_fn=collate_laion_coco,
+    )
     
     return dataloader

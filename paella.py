@@ -162,11 +162,13 @@ def train(proc_id, args):
 
     batch_iterator = iter(dataset)
     step = 0
+    epoch = 0
     while step < args.total_steps:
         try:
             images, captions = next(batch_iterator)
         except StopIteration:
-            print("hit stop iteration")
+            epoch += 1
+            print(f"Hit stop iteration, welcome to your next epoch: {epoch + 1}")
             batch_iterator = iter(dataset)
             images, captions = next(batch_iterator)
         except Exception as e:
@@ -174,6 +176,7 @@ def train(proc_id, args):
 
             traceback.print_exc()
             continue
+
         images = images.to(device)
         with torch.no_grad():
             image_indices = encode(vqmodel, images)
@@ -372,6 +375,7 @@ def train(proc_id, args):
         pbar.update(1)
         step += 1
 
+    print(f'Training complete (steps: {step}, epochs: {epoch})')
 
 def launch(args):
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in args.devices])
