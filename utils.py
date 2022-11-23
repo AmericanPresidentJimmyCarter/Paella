@@ -216,18 +216,18 @@ class ProcessDataLaionA:
     ):
         output = {}
 
-        image_data = item[image_key]
+        # image_data = item[image_key]
 
-        output["image_filename"] = item.get("__key__")
-        image_data = item[image_key]
-        image = Image.open(BytesIO(image_data))
-        output["jpg"] = self.transforms(image)
+        # output["image_filename"] = item.get("__key__")
+        # image_data = item[image_key]
+        # image = Image.open(BytesIO(image_data))
+        output["jpg"] = self.transforms(item[image_key])
 
         # Do we need this?? Why is text in bytes? Does all_captions need to be
         # decoded and json parsed first?
-        text = item[caption_key]
-        caption = text.decode("utf-8")
-        output["txt"] = caption
+        # text = item[caption_key]
+        # caption = text.decode("utf-8")
+        output["txt"] = item[caption_key]
 
         metadata_file = item["json"]
         metadata = metadata_file.decode("utf-8")
@@ -274,8 +274,8 @@ def filter_laion_coco_dataset(item,
 
 def filter_laion_a_dataset(item,
     punsafe_key='punsafe',
-    height_key='HEIGHT',
-    width_key='WIDTH',
+    height_key='height',
+    width_key='width',
 ):
     if "json" not in item:
         return False
