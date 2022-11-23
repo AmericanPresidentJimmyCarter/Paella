@@ -392,19 +392,19 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     args = parser.parse_args()
-    args.run_name = "run_name"
+    args.run_name = "paella-0"
     args.model = "UNet"
     args.dataset_type = "webdataset"
-    args.total_steps = 100_000
+    args.total_steps = 2_000_000
     args.batch_size = 4  # 22
     # Be sure to sync with TARGET_SIZE in util
     args.image_size = 512
     args.num_workers = 10
-    args.log_period = 1000  # 5000
-    args.extra_ckpt = 100_000
+    args.log_period = 5000
+    args.extra_ckpt = 200_000
     args.ema = True
     args.ema_decay = 0.9999
-    args.ema_update_steps = 100_000
+    args.ema_update_steps = 500_000
     args.ema_model_path = 'ema_weights.ckpt'
     args.accum_grad = 1
     args.num_codebook_vectors = 8192
