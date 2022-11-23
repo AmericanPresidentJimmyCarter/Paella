@@ -1,4 +1,5 @@
 import torch
+import json
 import torchvision
 from torch.utils.data import DataLoader
 from random import choice, randrange, seed
@@ -279,6 +280,7 @@ def filter_laion_a_dataset(item,
         return False
     metadata_file = item["json"]
     metadata = metadata_file.decode("utf-8")
+    metadata = json.loads(metadata)
 
     if height_key not in metadata:
         return False
