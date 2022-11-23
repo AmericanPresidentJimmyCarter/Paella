@@ -310,7 +310,7 @@ def get_dataloader(args):
     dataset = webdataset.WebDataset(
         args.dataset_path,
         resampled=True,
-        # handler=warn_and_continue,
+        handler=warn_and_continue,
     ) \
         .select(filter_laion_a_dataset) \
         .map(
