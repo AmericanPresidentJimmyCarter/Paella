@@ -290,7 +290,7 @@ def filter_laion_a_dataset(item,
             return False
         if punsafe_key not in item["json"]:
             return False
-        if item["json"][punsafe_key] > 0.7:
+        if item["json"][punsafe_key] > 0.99:
             return False
 
     return True
