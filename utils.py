@@ -172,6 +172,21 @@ def collate_oldbookillustrations_2(batch):
     return [images, captions]
 
 
+def collate_laion_coco(batch):
+    images_pil = []
+    for row in batch:
+        url = row['URL']
+        response = requests.get(url)
+        img = Image.open(BytesIO(response.content))
+        images_pil.append(img)
+
+    images = torch.cat([preprocess(crop_random(resize_image(i))) for i in images_pil], 0)
+    captions = [i['top_caption'] if i.get('top_caption', None) is not None else
+        i.get('TEXT', '') for i in batch]
+    return [images, captions]
+
+
+
 class ProcessDataLaionCoco:
     def __init__(self):
         self.transforms = lambda img: preprocess(crop_random(resize_image(img)))
@@ -235,8 +250,8 @@ class ProcessDataLaionA:
         return output
 
 
-def collate_laion_coco(batch):
-    images = torch.stack([i['jpg'] for i in batch], dim=0)
+def collate_laion_a(batch):
+    images = torch.cat([i['jpg'] for i in batch], dim=0)
     captions = [i['txt'] for i in batch]
     return [images, captions]
 
@@ -307,27 +322,35 @@ def get_dataloader(args):
     #     num_workers=args.num_workers,
     #     collate_fn=collate_oldbookillustrations_2)
 
-    # for laion/laion-coco or laion/laion-a
-    dataset = webdataset.WebDataset(
-        args.dataset_path,
-        resampled=True,
-        handler=warn_and_continue,
-    ) \
-        .select(filter_laion_a_dataset) \
-        .map(
-            ProcessDataLaionA(),
-            handler=warn_and_continue,
-        ) \
-        .shuffle(
-            690,
-            handler=warn_and_continue,
-        )
-
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
+    # Fore laion-coco
+    import datasets
+    dataset = datasets.load_dataset(args.dataset_path, split="train")
+    dataloader = DataLoader(dataset, batch_size=args.batch_size,
         num_workers=args.num_workers,
-        collate_fn=collate_laion_coco,
-    )
+        collate_fn=collate_laion_coco)
+
+
+    # for laion/laion-a
+    # dataset = webdataset.WebDataset(
+    #     args.dataset_path,
+    #     resampled=True,
+    #     handler=warn_and_continue,
+    # ) \
+    #     .select(filter_laion_a_dataset) \
+    #     .map(
+    #         ProcessDataLaionA(),
+    #         handler=warn_and_continue,
+    #     ) \
+    #     .shuffle(
+    #         690,
+    #         handler=warn_and_continue,
+    #     )
+
+    # dataloader = DataLoader(
+    #     dataset,
+    #     batch_size=args.batch_size,
+    #     num_workers=args.num_workers,
+    #     collate_fn=collate_laion_coco,
+    # )
 
     return dataloader

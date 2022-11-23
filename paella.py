@@ -396,7 +396,7 @@ if __name__ == "__main__":
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 2_000_000
-    args.batch_size = 18 # 22
+    args.batch_size = 16 # 22
     # Be sure to sync with TARGET_SIZE in util
     args.image_size = 256
     args.num_workers = 10
@@ -423,8 +423,8 @@ if __name__ == "__main__":
     ]
 
     args.n_nodes = 1
-    args.node_id = 0  # int(os.environ["SLURM_PROCID"])
-    args.devices = [0]  # [0, 1, 2, 3, 4, 5, 6, 7]
+    args.node_id = int(os.environ["SLURM_PROCID"])
+    args.devices = [0, 1, 2, 3, 4, 5, 6, 7]
 
     # Testing:
     # args.dataset_path = '6.tar'
