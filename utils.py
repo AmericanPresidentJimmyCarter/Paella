@@ -206,6 +206,36 @@ class ProcessDataLaionCoco:
         return output
 
 
+class ProcessDataLaionA:
+    def __init__(self):
+        self.transforms = lambda img: preprocess(crop_random(resize_image(img)))
+
+    def __call__(self, item,
+        image_key="jpg",
+        caption_key="txt",
+    ):
+        output = {}
+
+        image_data = item[image_key]
+
+        output["image_filename"] = item.get("__key__")
+        image_data = item[image_key]
+        image = Image.open(BytesIO(image_data))
+        output["jpg"] = self.transforms(image)
+
+        # Do we need this?? Why is text in bytes? Does all_captions need to be
+        # decoded and json parsed first?
+        text = item[caption_key]
+        caption = text.decode("utf-8")
+        output["txt"] = caption
+
+        metadata_file = item["json"]
+        metadata = metadata_file.decode("utf-8")
+        output["metadata"] = metadata
+
+        return output
+
+
 def collate_laion_coco(batch):
     images = torch.stack([i['jpg'] for i in batch], dim=0)
     captions = [i['txt'] for i in batch]
@@ -242,6 +272,30 @@ def filter_laion_coco_dataset(item,
     return True
 
 
+def filter_laion_a_dataset(item,
+    punsafe_key='punsafe',
+    height_key='HEIGHT',
+    width_key='WIDTH',
+):
+    if "json" not in item:
+        return False
+    else:
+        if height_key not in item["json"]:
+            return False
+        if item["json"][height_key] < TARGET_SIZE:
+            return False
+        if width_key not in item["json"]:
+            return False
+        if item["json"][width_key] < TARGET_SIZE:
+            return False
+        if punsafe_key not in item["json"]:
+            return False
+        if item["json"][punsafe_key] > 0.7:
+            return False
+
+    return True
+
+
 def get_dataloader(args):
     # for gigant/oldbookillustrations_2
     #
@@ -251,16 +305,16 @@ def get_dataloader(args):
     #     num_workers=args.num_workers,
     #     collate_fn=collate_oldbookillustrations_2)
 
-    # for laion/laion-coco
+    # for laion/laion-coco or laion/laion-a
     dataset = webdataset.WebDataset(
         args.dataset_path,
         resampled=True,
         handler=warn_and_continue,
     ) \
         .decode("rgb", handler=warn_and_continue) \
-        .select(filter_laion_coco_dataset) \
+        .select(filter_laion_a_dataset) \
         .map(
-            ProcessData(args.image_size),
+            ProcessDataLaionA(),
             handler=warn_and_continue,
         ) \
         .shuffle(690, handler=warn_and_continue)
