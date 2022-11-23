@@ -52,12 +52,12 @@ def crop_random(img):
 
 
 def encode(vq, x):
-    print('econde', x.size())
+    # print('econde', x.size())
     return vq.model.encode((2 * x - 1))[-1][-1]
 
 
 def decode(vq, z):
-    print('decode', z.size())
+    # print('decode', z.size())
     return vq.decode(z.view(z.shape[0], -1))
 
 
@@ -103,7 +103,7 @@ def sample(
             if renoise_mode == 'prev':
                 prev_x = x.clone()
             r, temp = r_range[i], temperatures[i]
-            print(x.size(), c.size(), r.size(), c_full.size())
+            # print(x.size(), c.size(), r.size(), c_full.size())
             logits = model(x, c, r, c_full)
             if classifier_free_scale >= 0:
                 logits_uncond = model(x, torch.zeros_like(c), r, torch.zeros_like(c_full))
