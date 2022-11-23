@@ -11,7 +11,7 @@ from io import BytesIO
 import webdataset
 from webdataset.handlers import warn_and_continue
 
-TARGET_SIZE = 512
+TARGET_SIZE = 256
 
 seed(12345)
 
@@ -325,5 +325,5 @@ def get_dataloader(args):
         num_workers=args.num_workers,
         collate_fn=collate_laion_coco,
     )
-    
+
     return dataloader

@@ -396,9 +396,9 @@ if __name__ == "__main__":
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 2_000_000
-    args.batch_size = 4  # 22
+    args.batch_size = 18 # 22
     # Be sure to sync with TARGET_SIZE in util
-    args.image_size = 512
+    args.image_size = 256
     args.num_workers = 10
     args.log_period = 5000
     args.extra_ckpt = 200_000
