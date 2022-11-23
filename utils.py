@@ -275,24 +275,23 @@ def filter_laion_a_dataset(item,
     height_key='height',
     width_key='width',
 ):
+    if "json" not in item:
+        return False
     metadata_file = item["json"]
     metadata = metadata_file.decode("utf-8")
 
-    if "json" not in metadata:
+    if height_key not in metadata:
         return False
-    else:
-        if height_key not in metadata["json"]:
-            return False
-        if metadata["json"][height_key] < TARGET_SIZE:
-            return False
-        if width_key not in metadata["json"]:
-            return False
-        if metadata["json"][width_key] < TARGET_SIZE:
-            return False
-        if punsafe_key not in metadata["json"]:
-            return False
-        if metadata["json"][punsafe_key] > 0.99:
-            return False
+    if metadata[height_key] < TARGET_SIZE:
+        return False
+    if width_key not in metadata:
+        return False
+    if metadata[width_key] < TARGET_SIZE:
+        return False
+    if punsafe_key not in metadata:
+        return False
+    if metadata[punsafe_key] > 0.99:
+        return False
 
     return True
 
