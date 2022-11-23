@@ -263,7 +263,7 @@ def filter_laion_coco_dataset(item,
             return False
         if punsafe_key not in item["json"]:
             return False
-        if item["json"][punsafe_key] > 0.7:
+        if item["json"][punsafe_key] > 0.99:
             return False
         for c_k in caption_keys:
             if c_k not in item["json"].keys():
