@@ -427,6 +427,7 @@ if __name__ == "__main__":
     args.devices = [0]  # [0, 1, 2, 3, 4, 5, 6, 7]
 
     # Testing:
+    # args.dataset_path = '/home/user/Programs/Paella/models/openimages-train-000000.tar'
     # args.dataset_path = "gigant/oldbookillustrations_2"
     args.dataset_path = "laion/laion-coco"
     print("Launching with args: ", args)

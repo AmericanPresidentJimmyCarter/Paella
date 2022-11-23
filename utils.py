@@ -216,18 +216,16 @@ class ProcessDataLaionA:
     ):
         output = {}
 
-        # image_data = item[image_key]
+        image_data = item[image_key]
 
-        # output["image_filename"] = item.get("__key__")
-        # image_data = item[image_key]
-        # image = Image.open(BytesIO(image_data))
-        output["jpg"] = self.transforms(item[image_key])
+        output["image_filename"] = item.get("__key__")
+        image_data = item[image_key]
+        image = Image.open(BytesIO(image_data))
+        output["jpg"] = self.transforms(image)
 
-        # Do we need this?? Why is text in bytes? Does all_captions need to be
-        # decoded and json parsed first?
-        # text = item[caption_key]
-        # caption = text.decode("utf-8")
-        output["txt"] = item[caption_key]
+        text = item[caption_key]
+        caption = text.decode("utf-8")
+        output["txt"] = caption
 
         metadata_file = item["json"]
         metadata = metadata_file.decode("utf-8")
@@ -277,20 +275,23 @@ def filter_laion_a_dataset(item,
     height_key='height',
     width_key='width',
 ):
-    if "json" not in item:
+    metadata_file = item["json"]
+    metadata = metadata_file.decode("utf-8")
+
+    if "json" not in metadata:
         return False
     else:
-        if height_key not in item["json"]:
+        if height_key not in metadata["json"]:
             return False
-        if item["json"][height_key] < TARGET_SIZE:
+        if metadata["json"][height_key] < TARGET_SIZE:
             return False
-        if width_key not in item["json"]:
+        if width_key not in metadata["json"]:
             return False
-        if item["json"][width_key] < TARGET_SIZE:
+        if metadata["json"][width_key] < TARGET_SIZE:
             return False
-        if punsafe_key not in item["json"]:
+        if punsafe_key not in metadata["json"]:
             return False
-        if item["json"][punsafe_key] > 0.99:
+        if metadata["json"][punsafe_key] > 0.99:
             return False
 
     return True
@@ -309,15 +310,17 @@ def get_dataloader(args):
     dataset = webdataset.WebDataset(
         args.dataset_path,
         resampled=True,
-        handler=warn_and_continue,
+        # handler=warn_and_continue,
     ) \
-        .decode("rgb", handler=warn_and_continue) \
         .select(filter_laion_a_dataset) \
         .map(
             ProcessDataLaionA(),
             handler=warn_and_continue,
         ) \
-        .shuffle(690, handler=warn_and_continue)
+        .shuffle(
+            690,
+            handler=warn_and_continue,
+        )
 
     dataloader = DataLoader(
         dataset,
