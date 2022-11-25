@@ -19,6 +19,9 @@ from rudalle import get_vae
 from ema import ModelEma
 
 
+CONDITIONING_GPU = "cuda:1"
+
+
 def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
     '''
     Get the CLIP embedding before feature extraction/normalization.
@@ -45,21 +48,23 @@ def train(proc_id, args):
     if not proc_id and args.node_id == 0:
         if resume:
             wandb.init(
-                project="project",
+                project=args.wandb_project,
                 name=args.run_name,
-                entity="your_entity",
+                entity=args.wandb_entity,
                 config=vars(args),
             )
         else:
             wandb.init(
-                project="project",
+                project=args.wandb_project,
                 name=args.run_name,
-                entity="your_entity",
+                entity=args.wandb_entity,
                 config=vars(args),
             )
         print(f"Starting run '{args.run_name}'....")
         print(
-            f"Batch Size check: {args.n_nodes * args.batch_size * args.accum_grad * len(args.devices)}"
+            f"Batch Size check: {
+                args.n_nodes * args.batch_size * args.accum_grad *
+                    len(args.devices)}"
         )
     parallel = len(args.devices) > 1
     device = torch.device(proc_id)
@@ -72,7 +77,7 @@ def train(proc_id, args):
         torch.backends.cudnn.benchmark = True
         dist.init_process_group(
             backend="nccl",
-            init_method="file:///data/dist_file",
+            init_method=args.parallel_init_file,
             world_size=args.n_nodes * len(args.devices),
             rank=proc_id + len(args.devices) * args.node_id,
         )
@@ -86,8 +91,8 @@ def train(proc_id, args):
     clip_model, _, _ = open_clip.create_model_and_transforms('ViT-H-14',
         pretrained='laion2b_s32b_b79k')
     del clip_model.visual
-    clip_model = clip_model.to(device).eval().half().requires_grad_(False)
-    t5_model = FrozenT5Embedder(device=device).to(device)
+    clip_model = clip_model.to(CONDITIONING_GPU).eval().half().requires_grad_(False)
+    t5_model = FrozenT5Embedder(device=CONDITIONING_GPU).to(CONDITIONING_GPU)
 
     lr = 3e-4
     dataset = get_dataloader(args)
@@ -187,7 +192,7 @@ def train(proc_id, args):
                 np.random.rand() < 0.1
             ):  # 10% of the times -> unconditional training for classifier-free-guidance
                 text_embeddings = images.new_zeros(images.size(0), 2048)
-                text_embeddings_full = images.new_zeros(images.size(0), 154, 1024)
+                text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
                 # text_embeddings = images.new_zeros(images.size(0), 77, 1024)
             else:
                 text_tokens = tokenizer.tokenize(captions)
@@ -195,7 +200,7 @@ def train(proc_id, args):
                 clip_embeddings = clip_model.encode_text(text_tokens).float()
                 clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float()
                 t5_embeddings_full = t5_model(captions)
-                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
                 text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
 
                 # text_embeddings = generate_clip_embeddings(clip_model, text_tokens)
@@ -274,7 +279,7 @@ def train(proc_id, args):
                         clip_model, text_tokens).float()
                     t5_embeddings_full = t5_model(cool_captions_text)
                     cool_captions_embeddings = torch.cat(
-                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
                     cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
                         t5_embeddings_full], 1)
 
@@ -396,10 +401,10 @@ if __name__ == "__main__":
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 2_000_000
-    args.batch_size = 16 # 22
+    args.batch_size = 48 # 22
     # Be sure to sync with TARGET_SIZE in util
-    args.image_size = 256
-    args.num_workers = 10
+    args.image_size = 128
+    args.num_workers = 12
     args.log_period = 5000
     args.extra_ckpt = 200_000
     args.ema = True
@@ -410,24 +415,27 @@ if __name__ == "__main__":
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
-    args.comparison_samples = 8
+    args.comparison_samples = 1
     args.cool_captions_text = [
         "a cat is sleeping",
-        "a painting of a clown",
-        "a horse",
-        "a river bank at sunset",
-        "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
-        "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
-        "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
-        "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
+        # "a painting of a clown",
+        # "a horse",
+        # "a river bank at sunset",
+        # "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
+        # "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
+        # "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
+        # "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
 
+    args.parallel_init_file = "file:///data/dist_file"
+    args.wandb_project = 'project'
+    args.wandb_entity = 'entity'
     args.n_nodes = 1
-    args.node_id = int(os.environ["SLURM_PROCID"])
-    args.devices = [0, 1, 2, 3, 4, 5, 6, 7]
+    args.node_id = 0 # int(os.environ["SLURM_PROCID"])
+    args.devices = [0] # [0, 1, 2, 3, 4, 5, 6, 7]
 
     # Testing:
-    # args.dataset_path = '6.tar'
+    # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'
     # args.dataset_path = "gigant/oldbookillustrations_2"
     args.dataset_path = "laion/laion-coco"
     print("Launching with args: ", args)

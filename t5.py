@@ -13,7 +13,11 @@ class AbstractEncoder(nn.Module):
 
 class FrozenT5Embedder(AbstractEncoder):
     """Uses the T5 transformer encoder for text"""
-    def __init__(self, version="google/t5-v1_1-large", device="cuda", max_length=77):  # others are google/t5-v1_1-xl and google/t5-v1_1-xxl
+    def __init__(self,
+        version="google/t5-v1_1-xxl",
+        device="cuda",
+        max_length=77,
+    ):  # others are google/t5-v1_1-xl and google/t5-v1_1-large
         super().__init__()
         self.tokenizer = T5Tokenizer.from_pretrained(version)
         self.transformer = T5EncoderModel.from_pretrained(version).half()

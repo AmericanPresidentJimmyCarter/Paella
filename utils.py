@@ -11,8 +11,11 @@ import requests
 from io import BytesIO
 import webdataset
 from webdataset.handlers import warn_and_continue
+import concurrent.futures
 
-TARGET_SIZE = 256
+CONNECTIONS = 100
+TIMEOUT = 5
+TARGET_SIZE = 128
 
 seed(12345)
 
@@ -172,17 +175,48 @@ def collate_oldbookillustrations_2(batch):
     return [images, captions]
 
 
-def collate_laion_coco(batch):
+def collate_laion_coco(
+    batch,
+    caption_key="TEXT",
+    caption_keys=["top_caption", "all_captions"]):
     images_pil = []
-    for row in batch:
-        url = row['URL']
-        response = requests.get(url)
-        img = Image.open(BytesIO(response.content))
-        images_pil.append(img)
 
-    images = torch.cat([preprocess(crop_random(resize_image(i))) for i in images_pil], 0)
-    captions = [i['top_caption'] if i.get('top_caption', None) is not None else
-        i.get('TEXT', '') for i in batch]
+    def load_url(url, timeout):
+        response = requests.get(url, timeout=timeout)
+        img = Image.open(BytesIO(response.content))
+        return img
+
+    # Just skip any URLs we fail to download.
+    urls = [row['URL'] for row in batch]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CONNECTIONS) as executor:
+        future_to_url = (executor.submit(load_url, url, TIMEOUT) for url in urls)
+        for itr, future in enumerate(concurrent.futures.as_completed(future_to_url)):
+            img = None
+            try:
+                img = future.result()
+            except Exception:
+                print(f'Failed to get image at URL \'{urls[itr]}\'')
+                pass
+            finally:
+                images_pil.append(img)
+
+    final_batch = []
+    for idx, img in enumerate(images_pil):
+        if img is None:
+            continue
+        final_b_item = { 'img': img, **batch[idx] }
+        captions_choices = list(set(
+            [final_b_item[caption_key]] +
+            [final_b_item[caption_keys[0]]] +
+            final_b_item[caption_keys[1]]
+        ))
+        final_b_item['chosen_caption'] = choice(captions_choices)
+        final_batch.append(final_b_item)
+
+    captions = [ i['chosen_caption'] for i in final_batch ]
+
+    images = torch.cat([preprocess(crop_random(resize_image(i['img'])))
+        for i in final_batch], 0)
     return [images, captions]
 
 
@@ -245,43 +279,47 @@ class ProcessDataLaionA:
 
         metadata_file = item["json"]
         metadata = metadata_file.decode("utf-8")
+        metadata = json.loads(metadata)
         output["metadata"] = metadata
 
-        return output
+        return [output]
 
 
 def collate_laion_a(batch):
-    images = torch.cat([i['jpg'] for i in batch], dim=0)
-    captions = [i['txt'] for i in batch]
-    return [images, captions]
+    batch = list(filter(filter_laion_a_dataset, batch))
+    img_tensors = [i['jpg'] for i in batch]
+    images = torch.cat(img_tensors, dim=0)
+    return [images, [i['txt'] for i in batch]]
 
 
-def filter_laion_coco_dataset(item,
-    image_key="jpg",
-    caption_key="txt",
+def filter_laion_coco_dataset(
+    item,
+    image_key="URL",
+    caption_key="TEXT",
     caption_keys=["top_caption", "all_captions"],
     punsafe_key='punsafe',
     height_key='HEIGHT',
     width_key='WIDTH',
 ):
-    if "json" not in item or caption_key not in item or image_key not in item:
+    if height_key not in item:
         return False
-    else:
-        if height_key not in item["json"]:
+    if item[height_key] < TARGET_SIZE:
+        return False
+    if width_key not in item:
+        return False
+    if item[width_key] < TARGET_SIZE:
+        return False
+    if punsafe_key not in item:
+        return False
+    if item[punsafe_key] > 0.99:
+        return False
+    if caption_key not in item:
+        return False
+    if image_key not in item:
+        return False
+    for c_k in caption_keys:
+        if c_k not in item.keys():
             return False
-        if item["json"][height_key] < TARGET_SIZE:
-            return False
-        if width_key not in item["json"]:
-            return False
-        if item["json"][width_key] < TARGET_SIZE:
-            return False
-        if punsafe_key not in item["json"]:
-            return False
-        if item["json"][punsafe_key] > 0.99:
-            return False
-        for c_k in caption_keys:
-            if c_k not in item["json"].keys():
-                return False
 
     return True
 
@@ -291,11 +329,9 @@ def filter_laion_a_dataset(item,
     height_key='height',
     width_key='width',
 ):
-    if "json" not in item:
+    if "metadata" not in item:
         return False
-    metadata_file = item["json"]
-    metadata = metadata_file.decode("utf-8")
-    metadata = json.loads(metadata)
+    metadata = item['metadata']
 
     if height_key not in metadata:
         return False
@@ -322,35 +358,47 @@ def get_dataloader(args):
     #     num_workers=args.num_workers,
     #     collate_fn=collate_oldbookillustrations_2)
 
-    # Fore laion-coco
-    import datasets
-    dataset = datasets.load_dataset(args.dataset_path, split="train")
-    dataloader = DataLoader(dataset, batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        collate_fn=collate_laion_coco)
-
-
-    # for laion/laion-a
-    # dataset = webdataset.WebDataset(
-    #     args.dataset_path,
-    #     resampled=True,
-    #     handler=warn_and_continue,
-    # ) \
-    #     .select(filter_laion_a_dataset) \
-    #     .map(
-    #         ProcessDataLaionA(),
-    #         handler=warn_and_continue,
-    #     ) \
-    #     .shuffle(
-    #         690,
-    #         handler=warn_and_continue,
-    #     )
-
+    # For laion-coco
+    # import datasets
+    # dataset = datasets.load_dataset(args.dataset_path, split="train",
+    #     streaming=True)
+    # torch_iterable_dataset = dataset.with_format("torch")
     # dataloader = DataLoader(
-    #     dataset,
+    #     torch_iterable_dataset,
     #     batch_size=args.batch_size,
     #     num_workers=args.num_workers,
-    #     collate_fn=collate_laion_coco,
-    # )
+    #     collate_fn=collate_laion_coco)
+
+    # for laion/laion-a
+    dataset = webdataset.WebDataset(
+        args.dataset_path,
+        resampled=True,
+        handler=warn_and_continue,
+    ) \
+        .map(
+            ProcessDataLaionA(),
+            handler=warn_and_continue,
+        )
+
+    dataloader = DataLoader(
+        dataset.batched(args.batch_size),
+        batch_size=None,
+        num_workers=args.num_workers,
+        collate_fn=collate_laion_a,
+    )
+
+    return dataloader
+
+
+def get_dataloader_laion_coco(args):
+    import datasets
+    dataset = datasets.load_dataset(args.dataset_path, split="train",
+        streaming=True).filter(filter_laion_coco_dataset)
+    torch_iterable_dataset = dataset.with_format("torch")
+    dataloader = DataLoader(
+        torch_iterable_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        collate_fn=collate_laion_coco)
 
     return dataloader
