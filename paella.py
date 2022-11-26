@@ -61,11 +61,11 @@ def train(proc_id, args):
                 config=vars(args),
             )
         print(f"Starting run '{args.run_name}'....")
-        print(
-            f"Batch Size check: {
-                args.n_nodes * args.batch_size * args.accum_grad *
-                    len(args.devices)}"
-        )
+        # print(
+        #     f"Batch Size check: {
+        #         args.n_nodes * args.batch_size * args.accum_grad *
+        #             len(args.devices)}"
+        # )
     parallel = len(args.devices) > 1
     device = torch.device(proc_id)
 

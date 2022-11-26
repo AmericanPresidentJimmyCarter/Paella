@@ -13,7 +13,7 @@ import webdataset
 from webdataset.handlers import warn_and_continue
 import concurrent.futures
 
-CONNECTIONS = 100
+CONNECTIONS = 16
 TIMEOUT = 5
 TARGET_SIZE = 128
 
@@ -160,6 +160,7 @@ class ProcessData:
 def preprocess(image):
     w, h = image.size
     w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
+    image = image.convert('RGB')
     image = image.resize((w, h), resample=PIL.Image.LANCZOS)
     image = np.array(image).astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)
@@ -303,22 +304,22 @@ def filter_laion_coco_dataset(
 ):
     if height_key not in item:
         return False
-    if item[height_key] < TARGET_SIZE:
+    if item[height_key] is not None and item[height_key] < TARGET_SIZE:
         return False
     if width_key not in item:
         return False
-    if item[width_key] < TARGET_SIZE:
+    if item[height_key] is not None and item[width_key] < TARGET_SIZE:
         return False
     if punsafe_key not in item:
         return False
-    if item[punsafe_key] > 0.99:
+    if item[height_key] is not None and item[punsafe_key] > 0.99:
         return False
-    if caption_key not in item:
+    if caption_key not in item or item[caption_key] is None:
         return False
-    if image_key not in item:
+    if image_key not in item or item[image_key] is None:
         return False
     for c_k in caption_keys:
-        if c_k not in item.keys():
+        if c_k not in item.keys() or item[c_k] is None:
             return False
 
     return True
