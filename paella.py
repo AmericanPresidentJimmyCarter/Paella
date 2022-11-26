@@ -196,10 +196,10 @@ def train(proc_id, args):
                 # text_embeddings = images.new_zeros(images.size(0), 77, 1024)
             else:
                 text_tokens = tokenizer.tokenize(captions)
-                text_tokens = text_tokens.to(device)
-                clip_embeddings = clip_model.encode_text(text_tokens).float()
-                clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float()
-                t5_embeddings_full = t5_model(captions)
+                text_tokens = text_tokens.to(CONDITIONING_GPU)
+                clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
+                clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float().to(device)
+                t5_embeddings_full = t5_model(captions).to(device)
                 text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
                 text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
 
@@ -271,13 +271,13 @@ def train(proc_id, args):
                     cool_captions_text = args.cool_captions_text
 
                     text_tokens = tokenizer.tokenize(cool_captions_text)
-                    text_tokens = text_tokens.to(device)
+                    text_tokens = text_tokens.to(CONDITIONING_GPU)
                     clip_embeddings = clip_model.encode_text(
                         text_tokens
-                    ).float()
+                    ).float().to(device)
                     clip_embeddings_full = generate_clip_embeddings(
-                        clip_model, text_tokens).float()
-                    t5_embeddings_full = t5_model(cool_captions_text)
+                        clip_model, text_tokens).float().to(device)
+                    t5_embeddings_full = t5_model(cool_captions_text).to(device)
                     cool_captions_embeddings = torch.cat(
                         [clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
                     cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
