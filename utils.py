@@ -408,6 +408,7 @@ def get_dataloader_laion_coco(args):
     torch_iterable_dataset = dataset.with_format("torch")
     dataloader = DataLoader(
         torch_iterable_dataset,
+        prefetch_factor=8,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         collate_fn=collate_laion_coco)
