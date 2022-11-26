@@ -8,7 +8,7 @@ from utils import get_dataloader_laion_coco
 parser = argparse.ArgumentParser()
 args = parser.parse_args()
 
-args.batch_size = 2 # 22
+args.batch_size = 16 # 22
 args.total_steps = 12345
 args.num_workers = 10
 args.dataset_path = "laion/laion-coco"

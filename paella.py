@@ -401,7 +401,7 @@ if __name__ == "__main__":
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 2_000_000
-    args.batch_size = 48 # 22
+    args.batch_size = 112 # 22
     # Be sure to sync with TARGET_SIZE in util
     args.image_size = 128
     args.num_workers = 12
@@ -415,16 +415,16 @@ if __name__ == "__main__":
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
-    args.comparison_samples = 1
+    args.comparison_samples = 8
     args.cool_captions_text = [
         "a cat is sleeping",
-        # "a painting of a clown",
-        # "a horse",
-        # "a river bank at sunset",
-        # "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
-        # "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
-        # "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
-        # "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
+        "a painting of a clown",
+        "a horse",
+        "a river bank at sunset",
+        "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
+        "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
+        "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
+        "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
 
     args.parallel_init_file = "file:///data/dist_file"

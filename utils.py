@@ -179,8 +179,10 @@ def collate_oldbookillustrations_2(batch):
 def collate_laion_coco(
     batch,
     caption_key="TEXT",
-    caption_keys=["top_caption", "all_captions"]):
+    caption_keys=["top_caption", "all_captions"],
+):
     images_pil = []
+    failure_idxs = []
 
     def load_url(url, timeout):
         response = requests.get(url, timeout=timeout)
@@ -196,30 +198,32 @@ def collate_laion_coco(
             try:
                 img = future.result()
             except Exception:
-                print(f'Failed to get image at URL \'{urls[itr]}\'')
+                # print(f'Failed to get image at URL \'{urls[itr]}\'')
+                failure_idxs.append(itr)
                 pass
             finally:
-                images_pil.append(img)
+                images_pil.append((img, itr))
 
     final_batch = []
-    for idx, img in enumerate(images_pil):
-        if img is None:
+    success_idxs = {val[1] for val in images_pil}
+    for idx, row in enumerate(batch):
+        if idx in failure_idxs:
             continue
-        final_b_item = { 'img': img, **batch[idx] }
-        captions_choices = list(set(
-            [final_b_item[caption_key]] +
-            [final_b_item[caption_keys[0]]] +
-            final_b_item[caption_keys[1]]
-        ))
-        final_b_item['chosen_caption'] = choice(captions_choices)
-        final_batch.append(final_b_item)
+        if idx in success_idxs:
+            final_b_item = { 'img': img, **row }
+            captions_choices = list(set(
+                [final_b_item[caption_key]] +
+                [final_b_item[caption_keys[0]]] +
+                final_b_item[caption_keys[1]]
+            ))
+            final_b_item['chosen_caption'] = choice(captions_choices)
+            final_batch.append(final_b_item)
 
     captions = [ i['chosen_caption'] for i in final_batch ]
 
     images = torch.cat([preprocess(crop_random(resize_image(i['img'])))
         for i in final_batch], 0)
     return [images, captions]
-
 
 
 class ProcessDataLaionCoco:
@@ -308,11 +312,11 @@ def filter_laion_coco_dataset(
         return False
     if width_key not in item:
         return False
-    if item[height_key] is not None and item[width_key] < TARGET_SIZE:
+    if item[width_key] is not None and item[width_key] < TARGET_SIZE:
         return False
     if punsafe_key not in item:
         return False
-    if item[height_key] is not None and item[punsafe_key] > 0.99:
+    if item[punsafe_key] is not None and item[punsafe_key] > 0.99:
         return False
     if caption_key not in item or item[caption_key] is None:
         return False
