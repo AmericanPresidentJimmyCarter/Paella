@@ -210,6 +210,9 @@ def collate_laion_coco(
         if idx in failure_idxs:
             continue
         if idx in success_idxs:
+            img = next((x[0] for x in images_pil if x[1] == idx), None)
+            if img is None:
+                continue
             final_b_item = { 'img': img, **row }
             captions_choices = list(set(
                 [final_b_item[caption_key]] +
