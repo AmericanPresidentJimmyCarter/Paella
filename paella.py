@@ -12,7 +12,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from t5 import FrozenT5Embedder
 from modules import DenoiseUNet
-from utils import get_dataloader, sample, encode, decode
+from utils import get_dataloader_laion_coco, sample, encode, decode
 import open_clip
 from open_clip import tokenizer
 from rudalle import get_vae
@@ -95,7 +95,7 @@ def train(proc_id, args):
     t5_model = FrozenT5Embedder(device=CONDITIONING_GPU).to(CONDITIONING_GPU)
 
     lr = 3e-4
-    dataset = get_dataloader(args)
+    dataset = get_dataloader_laion_coco(args)
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
@@ -200,8 +200,8 @@ def train(proc_id, args):
                 clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
                 clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float().to(device)
                 t5_embeddings_full = t5_model(captions).to(device)
-                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
-                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
+                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 2)
 
                 # text_embeddings = generate_clip_embeddings(clip_model, text_tokens)
 
@@ -279,9 +279,9 @@ def train(proc_id, args):
                         clip_model, text_tokens).float().to(device)
                     t5_embeddings_full = t5_model(cool_captions_text).to(device)
                     cool_captions_embeddings = torch.cat(
-                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
+                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
                     cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
-                        t5_embeddings_full], 1)
+                        t5_embeddings_full], 2)
 
                     # cool_captions_embeddings = generate_clip_embeddings(clip_model,
                     #     text_tokens)
@@ -383,7 +383,7 @@ def train(proc_id, args):
     print(f'Training complete (steps: {step}, epochs: {epoch})')
 
 def launch(args):
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in args.devices])
+    # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in args.devices])
     if len(args.devices) == 1:
         train(0, args)
     else:
