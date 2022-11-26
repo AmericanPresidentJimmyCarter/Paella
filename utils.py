@@ -184,28 +184,31 @@ def collate_laion_coco(
     images_pil = []
     failure_idxs = []
 
-    def load_url(url, timeout):
+    def load_url(url_tup, timeout):
+        # print('url tup', url_tup)
+        url = url_tup[1]
         response = requests.get(url, timeout=timeout)
         img = Image.open(BytesIO(response.content))
-        return img
+        return (img, url_tup[0])
 
     # Just skip any URLs we fail to download.
-    urls = [row['URL'] for row in batch]
+    url_tups = [(idx, row['URL']) for idx, row in enumerate(batch)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=CONNECTIONS) as executor:
-        future_to_url = (executor.submit(load_url, url, TIMEOUT) for url in urls)
-        for itr, future in enumerate(concurrent.futures.as_completed(future_to_url)):
-            img = None
+        future_to_url = (executor.submit(load_url, url_t, TIMEOUT) for url_t in url_tups)
+        for future in concurrent.futures.as_completed(future_to_url):
             try:
-                img = future.result()
-            except Exception:
+                img_tup = future.result()
+                images_pil.append(img_tup)
+            except Exception as e:
+                # import traceback
+                # traceback.print_exc()
                 # print(f'Failed to get image at URL \'{urls[itr]}\'')
-                failure_idxs.append(itr)
                 pass
-            finally:
-                images_pil.append((img, itr))
 
+    images_pil = list(filter(lambda x: x is not None, images_pil))
     final_batch = []
     success_idxs = {val[1] for val in images_pil}
+    failure_idxs = set(range(len(batch))) - success_idxs
     for idx, row in enumerate(batch):
         if idx in failure_idxs:
             continue
