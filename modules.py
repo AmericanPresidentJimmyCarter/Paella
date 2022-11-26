@@ -117,7 +117,7 @@ class DenoiseUNet(nn.Module):
         model_channels=320,
         num_heads=8,
         transformer_depth=1,
-        context_dim=1024,
+        context_dim=2048,
     ):
         super().__init__()
         self.num_labels = num_labels
