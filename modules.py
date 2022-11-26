@@ -117,7 +117,7 @@ class DenoiseUNet(nn.Module):
         model_channels=320,
         num_heads=8,
         transformer_depth=1,
-        context_dim=5120,
+        context_dim=1024,
     ):
         super().__init__()
         self.num_labels = num_labels
@@ -338,5 +338,5 @@ if __name__ == "__main__":
     x_random = torch.randint(0, 2048, (1, 48, 48)).long().to(device)
     c_random = torch.randn((1, 2048)).to(device)
     r_random = torch.rand(1).to(device)
-    c_full_random = torch.randn((1, 77, 5120)).to(device)
+    c_full_random = torch.randn((1, 77, 2048)).to(device)
     model(x_random, c_random, r_random, c_full_random)

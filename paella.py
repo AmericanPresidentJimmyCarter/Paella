@@ -91,7 +91,7 @@ def train(proc_id, args):
     clip_model, _, _ = open_clip.create_model_and_transforms('ViT-H-14',
         pretrained='laion2b_s32b_b79k')
     del clip_model.visual
-    clip_model = clip_model.to(CONDITIONING_GPU).eval().half().requires_grad_(False)
+    clip_model = clip_model.to(CONDITIONING_GPU).eval().requires_grad_(False)
     t5_model = FrozenT5Embedder(device=CONDITIONING_GPU).to(CONDITIONING_GPU)
 
     lr = 3e-4
