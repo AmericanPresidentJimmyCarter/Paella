@@ -60,7 +60,6 @@ def train(args):
     )
 
     lr = 3e-4
-    dataset = get_dataloader_laion_coco(args)
     accelerator.wait_for_everyone()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
@@ -121,7 +120,8 @@ def train(args):
         initial=start_step,
     )
     # should we prepare vqmodel, clip_model, t5_model?
-    model, optimizer, dataset = accelerator.prepare(model, optimizer, dataset)
+    model, optimizer, _, scheduler = accelerator.prepare(model, optimizer,
+        DataLoader(), scheduler)
     model.train()
     step = 0
     epoch = 0
@@ -136,6 +136,7 @@ def train(args):
             traceback.print_exc()
             continue
         images = b64_string_to_tensor(resp_dict['images'], device)
+        captions = resp_dict['captions']
         text_embeddings = b64_string_to_tensor(resp_dict['conditioning_flat'],
             device)
         text_embeddings_full = b64_string_to_tensor(resp_dict['conditioning_full'],

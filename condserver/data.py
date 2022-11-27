@@ -180,6 +180,7 @@ def collate_laion_coco(
     images = torch.cat([preprocess(crop_random(resize_image(i['img'])))
         for i in final_batch], 0)
     return images, {
+        'captions': captions,
         'flat': captions_flat_tensor,
         'full': captions_full_tensor,
     }

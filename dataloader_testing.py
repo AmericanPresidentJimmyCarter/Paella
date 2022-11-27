@@ -26,6 +26,7 @@ for i in range(4):
         import traceback
         traceback.print_exc()
     assert resp_dict is not None
+    assert 'captions' in resp_dict
     assert 'images' in resp_dict
     assert 'conditioning_flat' in resp_dict
     assert 'conditioning_full' in resp_dict

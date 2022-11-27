@@ -26,6 +26,7 @@ class ConditioningRequest(BaseModel):
 
 class BatchResponse(BaseModel):
     images: str
+    captions: List[str]
     conditioning_flat: str
     conditioning_full: str
 
@@ -37,7 +38,7 @@ class ConditioningResponse(BaseModel):
 
 class Arguments:
     batch_size = 16
-    num_workers = 2
+    num_workers = 32
     dataset_path = "laion/laion-coco"
     # cache_dir = "/home/user/.cache"  # cache_dir for models
 
@@ -125,7 +126,9 @@ def batch() -> BatchResponse:
         images, captions = next(batch_iterator)
         flat = captions.get('flat')
         full = captions.get('full')
+        captions = captions.get('captions')
         resp = BatchResponse(
+            captions=captions,
             images=tensor_to_b64_string(images),
             conditioning_flat=tensor_to_b64_string(flat),
             conditioning_full=tensor_to_b64_string(full),
