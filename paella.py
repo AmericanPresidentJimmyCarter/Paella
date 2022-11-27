@@ -19,15 +19,18 @@ from accelerate import Accelerator
 accelerator = Accelerator()
 device = accelerator.device
 
+
 def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
-    '''
+    """
     Get the CLIP embedding before feature extraction/normalization.
 
     TODO Alter the unet to use this instead of the final squished embedding.
-    '''
+    """
     cast_dtype = model.transformer.get_cast_dtype()
 
-    x = model.token_embedding(text_tokens).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+    x = model.token_embedding(text_tokens).to(
+        cast_dtype
+    )  # [batch_size, n_ctx, d_model]
 
     x = x + model.positional_embedding.to(cast_dtype)
     x = x.permute(1, 0, 2)  # NLD -> LND
@@ -42,14 +45,14 @@ def train(args):
         resume = True
     else:
         resume = False
-    if resume:
+    if resume and accelerator.is_main_process:
         wandb.init(
             project=args.wandb_project,
             name=args.run_name,
             entity=args.wandb_entity,
             config=vars(args),
         )
-    else:
+    elif accelerator.is_main_process:
         wandb.init(
             project=args.wandb_project,
             name=args.run_name,
@@ -58,27 +61,37 @@ def train(args):
         )
     accelerator.print(f"Starting run '{args.run_name}'....")
 
-    vqmodel = get_vae(cache_dir=args.cache_dir) if args.offload else get_vae(cache_dir=args.cache_dir).to(device)
+    vqmodel = get_vae(cache_dir=args.cache_dir).to(device)
     vqmodel.eval().requires_grad_(False)
+    accelerator.wait_for_everyone()
 
     model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
+    accelerator.wait_for_everyone()
 
-    accelerator.print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
+    accelerator.print(
+        f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}"
+    )
 
-    clip_model, _, _ = open_clip.create_model_and_transforms('ViT-H-14',
-        pretrained='laion2b_s32b_b79k', cache_dir=args.cache_dir)
+    clip_model, _, _ = open_clip.create_model_and_transforms(
+        "ViT-H-14", pretrained="laion2b_s32b_b79k", cache_dir=args.cache_dir
+    )
     del clip_model.visual
     clip_model = clip_model.to(device).eval().requires_grad_(False)
-    t5_model = FrozenT5Embedder(device=device)
+    accelerator.wait_for_everyone()
+
+    t5_model = FrozenT5Embedder(device=device, cache_dir=args.cache_dir).to(device)
+    accelerator.wait_for_everyone()
 
     lr = 3e-4
     dataset = get_dataloader_laion_coco(args)
+    accelerator.wait_for_everyone()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-    wandb.watch(model)
-    os.makedirs(f"results/{args.run_name}", exist_ok=True)
-    os.makedirs(f"models/{args.run_name}", exist_ok=True)
+    if accelerator.is_main_process:
+        wandb.watch(model)
+        os.makedirs(f"results/{args.run_name}", exist_ok=True)
+        os.makedirs(f"models/{args.run_name}", exist_ok=True)
 
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -119,43 +132,33 @@ def train(args):
 
     model_ema = None
     if args.ema:
-        model_ema = ModelEma(model=model, decay=args.ema_decay, device=device,
-            ema_model_path=args.ema_model_path)
-
-    # pbar = tqdm(
-    #     enumerate(dataset, start=start_step),
-    #     total=args.total_steps,
-    #     initial=start_step) \
-    #     if args.node_id == 0 and proc_id == 0 \
-    #     else enumerate(dataset, start=start_step)
+        model_ema = ModelEma(
+            model=model,
+            decay=args.ema_decay,
+            device=device,
+            ema_model_path=args.ema_model_path,
+        )
+    accelerator.wait_for_everyone()
+    pbar = (
+        tqdm(
+            enumerate(dataset, start=start_step),
+            total=args.total_steps,
+            initial=start_step,
+        )
+        if accelerator.is_main_process
+        else enumerate(dataset, start=start_step)
+    )
+    # should we prepare vqmodel, clip_model, t5_model?
     model, optimizer, dataset = accelerator.prepare(model, optimizer, dataset)
     model.train()
-    # iterator = enumerate(dataset, start=start_step)
-    pbar = tqdm(total=args.total_steps)
-
-    batch_iterator = iter(dataset)
     step = 0
     epoch = 0
-    while step < args.total_steps:
-        try:
-            images, captions = next(batch_iterator)
-        except StopIteration:
-            epoch += 1
-            accelerator.print(f"Hit stop iteration, welcome to your next epoch: {epoch + 1}")
-            batch_iterator = iter(dataset)
-            images, captions = next(batch_iterator)
-        except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            continue
-
-        images = images.to('cpu') if args.offload else images.to(device) # move to cpu if offloading
-        with torch.no_grad():
+    images = images.to(device)
+    for step, (images, captions) in pbar:
+        with torch.no_grad(), torch.autocast("cuda"):
             image_indices = encode(vqmodel, images)
-            image_indices = image_indices.to(device) if args.offload else image_indices # move back to device if offloaded [?]
             r = torch.rand(images.size(0), device=device)
-            noised_indices, mask = model.add_noise(image_indices, r)
+            noised_indices, mask = model.module.add_noise(image_indices, r)
 
             if (
                 np.random.rand() < 0.1
@@ -167,17 +170,23 @@ def train(args):
                 text_tokens = tokenizer.tokenize(captions)
                 text_tokens = text_tokens.to(device)
                 clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
-                clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float().to(device)
+                clip_embeddings_full = (
+                    generate_clip_embeddings(clip_model, text_tokens).float().to(device)
+                )
                 t5_embeddings_full = t5_model(captions).to(device)
-                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
-                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 2)
+                text_embeddings = torch.cat(
+                    [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1
+                )
+                text_embeddings_full = torch.cat(
+                    [clip_embeddings_full, t5_embeddings_full], 2
+                )
 
                 # text_embeddings = generate_clip_embeddings(clip_model, text_tokens)
 
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
+        image_indices = image_indices.to(device)
         loss = criterion(pred, image_indices)
         loss_adjusted = loss / args.accum_grad
-
 
         accelerator.backward(loss_adjusted)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
@@ -191,24 +200,25 @@ def train(args):
 
         total_loss += loss.item()
         total_acc += acc.item()
+        if accelerator.is_main_process:
+            log = {
+                "loss": total_loss / (step + 1),
+                "acc": total_acc / (step + 1),
+                "curr_loss": loss.item(),
+                "curr_acc": acc.item(),
+                "ppx": np.exp(total_loss / (step + 1)),
+                "lr": optimizer.param_groups[0]["lr"],
+                "grad_norm": grad_norm,
+            }
+            pbar.set_postfix(log)
+            wandb.log(log)
 
-        log = {
-            "loss": total_loss / (step + 1),
-            "acc": total_acc / (step + 1),
-            "curr_loss": loss.item(),
-            "curr_acc": acc.item(),
-            "ppx": np.exp(total_loss / (step + 1)),
-            "lr": optimizer.param_groups[0]["lr"],
-            "grad_norm": grad_norm,
-        }
-        pbar.set_postfix(log)
-        wandb.log(log)
-
-        if model_ema is not None and \
-            step % args.ema_update_steps == 0:
-            accelerator.print(
-                f"EMA weights are being updated and saved ({step=})"
-            )
+        if (
+            model_ema is not None
+            and accelerator.is_main_process
+            and step % args.ema_update_steps == 0
+        ):
+            accelerator.print(f"EMA weights are being updated and saved ({step=})")
             model_ema.update(model)
             torch.save(model_ema.module, args.ema_model_path)
 
@@ -223,13 +233,14 @@ def train(args):
             model.eval()
             with torch.no_grad():
                 n = 1
-                images = images[:args.comparison_samples]
-                image_indices = image_indices[:args.comparison_samples]
-                captions = captions[:args.comparison_samples]
-                text_embeddings = text_embeddings[:args.comparison_samples]
-                text_embeddings_full = text_embeddings_full[:args.comparison_samples]
-                sampled = sample(model, c=text_embeddings,
-                    c_full=text_embeddings_full)  # [-1]
+                images = images[: args.comparison_samples]
+                image_indices = image_indices[: args.comparison_samples]
+                captions = captions[: args.comparison_samples]
+                text_embeddings = text_embeddings[: args.comparison_samples]
+                text_embeddings_full = text_embeddings_full[: args.comparison_samples]
+                sampled = sample(
+                    model, c=text_embeddings, c_full=text_embeddings_full
+                )  # [-1]
                 sampled = decode(vqmodel, sampled)
                 recon_images = decode(vqmodel, image_indices)
 
@@ -240,16 +251,21 @@ def train(args):
 
                     text_tokens = tokenizer.tokenize(cool_captions_text)
                     text_tokens = text_tokens.to(device)
-                    clip_embeddings = clip_model.encode_text(
-                        text_tokens
-                    ).float().to(device)
-                    clip_embeddings_full = generate_clip_embeddings(
-                        clip_model, text_tokens).float().to(device)
+                    clip_embeddings = (
+                        clip_model.encode_text(text_tokens).float().to(device)
+                    )
+                    clip_embeddings_full = (
+                        generate_clip_embeddings(clip_model, text_tokens)
+                        .float()
+                        .to(device)
+                    )
                     t5_embeddings_full = t5_model(cool_captions_text).to(device)
                     cool_captions_embeddings = torch.cat(
-                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
-                    cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
-                        t5_embeddings_full], 2)
+                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1
+                    )
+                    cool_captions_embeddings_full = torch.cat(
+                        [clip_embeddings_full, t5_embeddings_full], 2
+                    )
 
                     # cool_captions_embeddings = generate_clip_embeddings(clip_model,
                     #     text_tokens)
@@ -264,8 +280,11 @@ def train(args):
                     st = time.time()
                     for caption_embedding in cool_captions:
                         caption_embedding = caption_embedding[0].float().to(device)
-                        sampled_text = sample(model, c=caption_embedding,
-                            c_full=cool_captions_embeddings_full)  # [-1]
+                        sampled_text = sample(
+                            model,
+                            c=caption_embedding,
+                            c_full=cool_captions_embeddings_full,
+                        )  # [-1]
                         sampled_text = decode(vqmodel, sampled_text)
                         # sampled_text_ema = decode(vqmodel, sampled_text_ema)
                         for s in sampled_text:
@@ -348,7 +367,8 @@ def train(args):
         pbar.update(1)
         step += 1
 
-    accelerator.print(f'Training complete (steps: {step}, epochs: {epoch})')
+    accelerator.print(f"Training complete (steps: {step}, epochs: {epoch})")
+
 
 if __name__ == "__main__":
     import argparse
@@ -359,7 +379,7 @@ if __name__ == "__main__":
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 2_000_000
-    args.batch_size = 112 # 22
+    args.batch_size = 112  # 22
     # Be sure to sync with TARGET_SIZE in util
     args.image_size = 128
     args.num_workers = 12
@@ -368,7 +388,7 @@ if __name__ == "__main__":
     args.ema = True
     args.ema_decay = 0.9999
     args.ema_update_steps = 500_000
-    args.ema_model_path = 'ema_weights.ckpt'
+    args.ema_model_path = "ema_weights.ckpt"
     args.accum_grad = 1
     args.num_codebook_vectors = 8192
     args.log_captions = True
@@ -384,11 +404,11 @@ if __name__ == "__main__":
         "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
         "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
-    parallel_init_dir = '/data'
+    parallel_init_dir = "/data"
     args.parallel_init_file = f"file://{parallel_init_dir}/dist_file"
-    args.wandb_project = 'project'
-    args.wandb_entity = 'entity'
-    args.cache_dir = '/data/cache' # cache_dir for models
+    args.wandb_project = "project"
+    args.wandb_entity = "entity"
+    args.cache_dir = "/data/cache"  # cache_dir for models
     args.offload = False
 
     # Testing:

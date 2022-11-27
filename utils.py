@@ -229,7 +229,7 @@ def collate_laion_coco(
 
     images = torch.cat([preprocess(crop_random(resize_image(i['img'])))
         for i in final_batch], 0)
-    return [images, captions]
+    return images, captions
 
 
 class ProcessDataLaionCoco:
@@ -309,6 +309,7 @@ def filter_laion_coco_dataset(
     caption_key="TEXT",
     caption_keys=["top_caption", "all_captions"],
     punsafe_key='punsafe',
+    watermark_key='pwatermark',
     height_key='HEIGHT',
     width_key='WIDTH',
 ):
@@ -323,6 +324,10 @@ def filter_laion_coco_dataset(
     if punsafe_key not in item:
         return False
     if item[punsafe_key] is not None and item[punsafe_key] > 0.99:
+        return False
+    if watermark_key not in item:
+        return False
+    if item[watermark_key] is not None and item[watermark_key] > 0.9:
         return False
     if caption_key not in item or item[caption_key] is None:
         return False
@@ -403,12 +408,10 @@ def get_dataloader(args):
 
 def get_dataloader_laion_coco(args):
     import datasets
-    dataset = datasets.load_dataset(args.dataset_path, split="train",
-        streaming=True).filter(filter_laion_coco_dataset)
+    dataset = datasets.load_dataset(args.dataset_path,split="train", streaming=True).filter(filter_laion_coco_dataset)
     torch_iterable_dataset = dataset.with_format("torch")
     dataloader = DataLoader(
         torch_iterable_dataset,
-        prefetch_factor=8,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         collate_fn=collate_laion_coco)
