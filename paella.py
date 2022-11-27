@@ -23,7 +23,7 @@ from accelerate import Accelerator
 accelerator = Accelerator()
 device = accelerator.device
 
-URL_BATCH = 'http://127.0.0.1:4455/batch'
+URL_BATCH = 'http://127.0.0.1:4456/batch'
 URL_CONDITIONING = 'http://127.0.0.1:4455/conditioning'
 
 
@@ -135,6 +135,13 @@ def train(args):
             import traceback
             traceback.print_exc()
             continue
+
+        if 'images' not in resp_dict or \
+            'captions' not in resp_dict or \
+            'conditioning_flat' not in resp_dict or \
+            'conditioning_full' not in resp_dict:
+            continue
+
         images = b64_string_to_tensor(resp_dict['images'], device)
         captions = resp_dict['captions']
         text_embeddings = b64_string_to_tensor(resp_dict['conditioning_flat'],

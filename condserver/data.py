@@ -20,7 +20,7 @@ CONNECTIONS = 16
 TIMEOUT = 5
 TARGET_SIZE = 256
 
-URL_BATCH = 'http://127.0.0.1:4455/batch'
+URL_BATCH = 'http://127.0.0.1:4456/batch'
 URL_CONDITIONING = 'http://127.0.0.1:4455/conditionings'
 
 seed(12345)
@@ -360,7 +360,7 @@ def get_dataloader(args):
     return dataloader
 
 
-def get_dataloader_laion_coco(args, spawn_clip_model, spawn_t5_model):
+def get_dataloader_laion_coco(args):
     import datasets
     dataset = datasets \
         .load_dataset(args.dataset_path,split="train", streaming=True) \

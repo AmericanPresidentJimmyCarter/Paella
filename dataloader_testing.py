@@ -20,7 +20,7 @@ assert 'full' in resp_dict
 for i in range(4):
     resp_dict = None
     try:
-        resp = requests.post(url='http://127.0.0.1:4455/batch')
+        resp = requests.post(url='http://127.0.0.1:4456/batch')
         resp_dict = resp.json()
     except Exception:
         import traceback
