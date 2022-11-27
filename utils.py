@@ -229,7 +229,7 @@ def collate_laion_coco(
 
     images = torch.cat([preprocess(crop_random(resize_image(i['img'])))
         for i in final_batch], 0)
-    return [images, captions]
+    return images, captions
 
 
 class ProcessDataLaionCoco:
@@ -408,12 +408,10 @@ def get_dataloader(args):
 
 def get_dataloader_laion_coco(args):
     import datasets
-    dataset = datasets.load_dataset(args.dataset_path, split="train",
-        streaming=True).filter(filter_laion_coco_dataset)
+    dataset = datasets.load_dataset(args.dataset_path,split="train", streaming=True).filter(filter_laion_coco_dataset)
     torch_iterable_dataset = dataset.with_format("torch")
     dataloader = DataLoader(
         torch_iterable_dataset,
-        prefetch_factor=8,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         collate_fn=collate_laion_coco)

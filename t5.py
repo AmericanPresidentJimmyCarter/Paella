@@ -17,7 +17,7 @@ class FrozenT5Embedder(AbstractEncoder):
         version="google/t5-v1_1-large",
         device="cuda",
         max_length=77,
-        cache_dir="~/.cache",
+        cache_dir="./cache",
     ):  # others are google/t5-v1_1-xl and google/t5-v1_1-xxl
         super().__init__()
         self.tokenizer = T5Tokenizer.from_pretrained(version, cache_dir=cache_dir)
