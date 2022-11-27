@@ -7,9 +7,6 @@ import torchvision
 from tqdm import tqdm
 import time
 import numpy as np
-import torch.multiprocessing as mp
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel
 from t5 import FrozenT5Embedder
 from modules import DenoiseUNet
 from utils import get_dataloader_laion_coco, sample, encode, decode
@@ -17,10 +14,10 @@ import open_clip
 from open_clip import tokenizer
 from rudalle import get_vae
 from ema import ModelEma
+from accelerate import Accelerator
 
-
-CONDITIONING_GPU = "cuda:1"
-
+accelerator = Accelerator()
+device = accelerator.device
 
 def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
     '''
@@ -40,69 +37,48 @@ def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
     return x
 
 
-def train(proc_id, args):
+def train(args):
     if os.path.exists(f"results/{args.run_name}/log.pt"):
         resume = True
     else:
         resume = False
-    if not proc_id and args.node_id == 0:
-        if resume:
-            wandb.init(
-                project=args.wandb_project,
-                name=args.run_name,
-                entity=args.wandb_entity,
-                config=vars(args),
-            )
-        else:
-            wandb.init(
-                project=args.wandb_project,
-                name=args.run_name,
-                entity=args.wandb_entity,
-                config=vars(args),
-            )
-        print(f"Starting run '{args.run_name}'....")
-        # print(
-        #     f"Batch Size check: {
-        #         args.n_nodes * args.batch_size * args.accum_grad *
-        #             len(args.devices)}"
-        # )
-    parallel = len(args.devices) > 1
-    device = torch.device(proc_id)
-
-    vqmodel = get_vae().to(device)
-    vqmodel.eval().requires_grad_(False)
-
-    if parallel:
-        torch.cuda.set_device(proc_id)
-        torch.backends.cudnn.benchmark = True
-        dist.init_process_group(
-            backend="nccl",
-            init_method=args.parallel_init_file,
-            world_size=args.n_nodes * len(args.devices),
-            rank=proc_id + len(args.devices) * args.node_id,
+    if resume:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.run_name,
+            entity=args.wandb_entity,
+            config=vars(args),
         )
-        torch.set_num_threads(6)
+    else:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.run_name,
+            entity=args.wandb_entity,
+            config=vars(args),
+        )
+    accelerator.print(f"Starting run '{args.run_name}'....")
+
+    vqmodel = get_vae(cache_dir=args.cache_dir) if args.offload else get_vae(cache_dir=args.cache_dir).to(device)
+    vqmodel.eval().requires_grad_(False)
 
     model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
 
-    if not proc_id and args.node_id == 0:
-        print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
+    accelerator.print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
 
     clip_model, _, _ = open_clip.create_model_and_transforms('ViT-H-14',
-        pretrained='laion2b_s32b_b79k')
+        pretrained='laion2b_s32b_b79k', cache_dir=args.cache_dir)
     del clip_model.visual
-    clip_model = clip_model.to(CONDITIONING_GPU).eval().requires_grad_(False)
-    t5_model = FrozenT5Embedder(device=CONDITIONING_GPU).to(CONDITIONING_GPU)
+    clip_model = clip_model.to(device).eval().requires_grad_(False)
+    t5_model = FrozenT5Embedder(device=device)
 
     lr = 3e-4
     dataset = get_dataloader_laion_coco(args)
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-    if not proc_id and args.node_id == 0:
-        wandb.watch(model)
-        os.makedirs(f"results/{args.run_name}", exist_ok=True)
-        os.makedirs(f"models/{args.run_name}", exist_ok=True)
+    wandb.watch(model)
+    os.makedirs(f"results/{args.run_name}", exist_ok=True)
+    os.makedirs(f"models/{args.run_name}", exist_ok=True)
 
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -115,8 +91,7 @@ def train(proc_id, args):
     )
 
     if resume:
-        if not proc_id and args.node_id == 0:
-            print("Loading last checkpoint....")
+        accelerator.print("Loading last checkpoint....")
         logs = torch.load(f"results/{args.run_name}/log.pt")
         start_step = logs["step"] + 1
         losses = logs["losses"]
@@ -125,30 +100,22 @@ def train(proc_id, args):
         model.load_state_dict(
             torch.load(f"models/{args.run_name}/model.pt", map_location=device)
         )
-        if not proc_id and args.node_id == 0:
-            print("Loaded model.")
+        accelerator.print("Loaded model.")
         opt_state = torch.load(f"models/{args.run_name}/optim.pt", map_location=device)
         last_lr = opt_state["param_groups"][0]["lr"]
         with torch.no_grad():
             for _ in range(logs["step"]):
                 scheduler.step()
-        if not proc_id and args.node_id == 0:
-            print(f"Initialized scheduler")
-            print(
-                f"Sanity check => Last-LR: {last_lr} == Current-LR: {optimizer.param_groups[0]['lr']} -> {last_lr == optimizer.param_groups[0]['lr']}"
-            )
+        accelerator.print(f"Initialized scheduler")
+        accelerator.print(
+            f"Sanity check => Last-LR: {last_lr} == Current-LR: {optimizer.param_groups[0]['lr']} -> {last_lr == optimizer.param_groups[0]['lr']}"
+        )
         optimizer.load_state_dict(opt_state)
         del opt_state
     else:
         losses = []
         accuracies = []
         start_step, total_loss, total_acc = 0, 0, 0
-
-    if parallel:
-        model = DistributedDataParallel(
-            model, device_ids=[device], output_device=device
-        )
-        model = model.module
 
     model_ema = None
     if args.ema:
@@ -161,6 +128,7 @@ def train(proc_id, args):
     #     initial=start_step) \
     #     if args.node_id == 0 and proc_id == 0 \
     #     else enumerate(dataset, start=start_step)
+    model, optimizer, dataset = accelerator.prepare(model, optimizer, dataset)
     model.train()
     # iterator = enumerate(dataset, start=start_step)
     pbar = tqdm(total=args.total_steps)
@@ -173,7 +141,7 @@ def train(proc_id, args):
             images, captions = next(batch_iterator)
         except StopIteration:
             epoch += 1
-            print(f"Hit stop iteration, welcome to your next epoch: {epoch + 1}")
+            accelerator.print(f"Hit stop iteration, welcome to your next epoch: {epoch + 1}")
             batch_iterator = iter(dataset)
             images, captions = next(batch_iterator)
         except Exception as e:
@@ -182,9 +150,10 @@ def train(proc_id, args):
             traceback.print_exc()
             continue
 
-        images = images.to(device)
+        images = images.to('cpu') if args.offload else images.to(device) # move to cpu if offloading
         with torch.no_grad():
             image_indices = encode(vqmodel, images)
+            image_indices = image_indices.to(device) if args.offload else image_indices # move back to device if offloaded [?]
             r = torch.rand(images.size(0), device=device)
             noised_indices, mask = model.add_noise(image_indices, r)
 
@@ -196,7 +165,7 @@ def train(proc_id, args):
                 # text_embeddings = images.new_zeros(images.size(0), 77, 1024)
             else:
                 text_tokens = tokenizer.tokenize(captions)
-                text_tokens = text_tokens.to(CONDITIONING_GPU)
+                text_tokens = text_tokens.to(device)
                 clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
                 clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float().to(device)
                 t5_embeddings_full = t5_model(captions).to(device)
@@ -210,7 +179,7 @@ def train(proc_id, args):
         loss_adjusted = loss / args.accum_grad
 
 
-        loss_adjusted.backward()
+        accelerator.backward(loss_adjusted)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
         if (step + 1) % args.accum_grad == 0:
             optimizer.step()
@@ -223,29 +192,28 @@ def train(proc_id, args):
         total_loss += loss.item()
         total_acc += acc.item()
 
-        if not proc_id and args.node_id == 0:
-            log = {
-                "loss": total_loss / (step + 1),
-                "acc": total_acc / (step + 1),
-                "curr_loss": loss.item(),
-                "curr_acc": acc.item(),
-                "ppx": np.exp(total_loss / (step + 1)),
-                "lr": optimizer.param_groups[0]["lr"],
-                "grad_norm": grad_norm,
-            }
-            pbar.set_postfix(log)
-            wandb.log(log)
+        log = {
+            "loss": total_loss / (step + 1),
+            "acc": total_acc / (step + 1),
+            "curr_loss": loss.item(),
+            "curr_acc": acc.item(),
+            "ppx": np.exp(total_loss / (step + 1)),
+            "lr": optimizer.param_groups[0]["lr"],
+            "grad_norm": grad_norm,
+        }
+        pbar.set_postfix(log)
+        wandb.log(log)
 
-        if model_ema is not None and args.node_id == 0 and proc_id == 0 and \
+        if model_ema is not None and \
             step % args.ema_update_steps == 0:
-            print(
+            accelerator.print(
                 f"EMA weights are being updated and saved ({step=})"
             )
             model_ema.update(model)
             torch.save(model_ema.module, args.ema_model_path)
 
-        if args.node_id == 0 and proc_id == 0 and step % args.log_period == 0:
-            print(
+        if step % args.log_period == 0:
+            accelerator.print(
                 f"Step {step} - loss {total_loss / (step + 1)} - acc {total_acc / (step + 1)} - ppx {np.exp(total_loss / (step + 1))}"
             )
 
@@ -271,7 +239,7 @@ def train(proc_id, args):
                     cool_captions_text = args.cool_captions_text
 
                     text_tokens = tokenizer.tokenize(cool_captions_text)
-                    text_tokens = text_tokens.to(CONDITIONING_GPU)
+                    text_tokens = text_tokens.to(device)
                     clip_embeddings = clip_model.encode_text(
                         text_tokens
                     ).float().to(device)
@@ -303,7 +271,7 @@ def train(proc_id, args):
                         for s in sampled_text:
                             cool_captions_sampled.append(s.cpu())
                             # cool_captions_sampled_ema.append(t.cpu())
-                    print(
+                    accelerator.print(
                         f"Took {time.time() - st} seconds to sample {len(cool_captions_text) * 2} captions."
                     )
 
@@ -380,17 +348,7 @@ def train(proc_id, args):
         pbar.update(1)
         step += 1
 
-    print(f'Training complete (steps: {step}, epochs: {epoch})')
-
-def launch(args):
-    # os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(d) for d in args.devices])
-    if len(args.devices) == 1:
-        train(0, args)
-    else:
-        os.environ["MASTER_ADDR"] = "localhost"
-        os.environ["MASTER_PORT"] = "33751"
-        p = mp.spawn(train, nprocs=len(args.devices), args=(args,))
-
+    accelerator.print(f'Training complete (steps: {step}, epochs: {epoch})')
 
 if __name__ == "__main__":
     import argparse
@@ -426,17 +384,16 @@ if __name__ == "__main__":
         "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
         "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
-
-    args.parallel_init_file = "file:///data/dist_file"
+    parallel_init_dir = '/data'
+    args.parallel_init_file = f"file://{parallel_init_dir}/dist_file"
     args.wandb_project = 'project'
     args.wandb_entity = 'entity'
-    args.n_nodes = 1
-    args.node_id = 0 # int(os.environ["SLURM_PROCID"])
-    args.devices = [0] # [0, 1, 2, 3, 4, 5, 6, 7]
+    args.cache_dir = '/data/cache' # cache_dir for models
+    args.offload = False
 
     # Testing:
     # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'
     # args.dataset_path = "gigant/oldbookillustrations_2"
     args.dataset_path = "laion/laion-coco"
-    print("Launching with args: ", args)
-    launch(args)
+    accelerator.print("Launching with args: ", args)
+    train(args)
