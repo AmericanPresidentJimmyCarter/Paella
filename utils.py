@@ -15,7 +15,7 @@ import concurrent.futures
 
 CONNECTIONS = 16
 TIMEOUT = 5
-TARGET_SIZE = 128
+TARGET_SIZE = 256
 
 seed(12345)
 
