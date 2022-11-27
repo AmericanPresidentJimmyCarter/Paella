@@ -3,13 +3,13 @@ import torch
 from torch import nn
 from transformers import T5Tokenizer, T5EncoderModel
 
+
 class AbstractEncoder(nn.Module):
     def __init__(self):
         super().__init__()
 
     def encode(self, *args, **kwargs):
         raise NotImplementedError
-
 
 class FrozenT5Embedder(AbstractEncoder):
     """Uses the T5 transformer encoder for text"""

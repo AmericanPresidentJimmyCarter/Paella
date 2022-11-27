@@ -15,3 +15,7 @@ sentencepiece
 cython
 webdataset
 tensorboard
+accelerate
+uvicorn[standard]
+fastapi
+pydantic

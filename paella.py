@@ -7,11 +7,15 @@ import torchvision
 from tqdm import tqdm
 import time
 import numpy as np
-from t5 import FrozenT5Embedder
 from modules import DenoiseUNet
-from utils import get_dataloader_laion_coco, sample, encode, decode
-import open_clip
-from open_clip import tokenizer
+import requests
+from utils import (
+    sample,
+    encode,
+    decode,
+    b64_string_to_tensor,
+)
+
 from rudalle import get_vae
 from ema import ModelEma
 from accelerate import Accelerator
@@ -19,25 +23,8 @@ from accelerate import Accelerator
 accelerator = Accelerator()
 device = accelerator.device
 
-
-def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
-    """
-    Get the CLIP embedding before feature extraction/normalization.
-
-    TODO Alter the unet to use this instead of the final squished embedding.
-    """
-    cast_dtype = model.transformer.get_cast_dtype()
-
-    x = model.token_embedding(text_tokens).to(
-        cast_dtype
-    )  # [batch_size, n_ctx, d_model]
-
-    x = x + model.positional_embedding.to(cast_dtype)
-    x = x.permute(1, 0, 2)  # NLD -> LND
-    x = model.transformer(x, attn_mask=model.attn_mask)
-    x = x.permute(1, 0, 2)  # LND -> NLD
-    x = model.ln_final(x)  # [batch_size, n_ctx, transformer.width]
-    return x
+URL_BATCH = 'http://127.0.0.1:4455/batch'
+URL_CONDITIONING = 'http://127.0.0.1:4455/conditioning'
 
 
 def train(args):
@@ -71,16 +58,6 @@ def train(args):
     accelerator.print(
         f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}"
     )
-
-    clip_model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-H-14", pretrained="laion2b_s32b_b79k", cache_dir=args.cache_dir
-    )
-    del clip_model.visual
-    clip_model = clip_model.to(device).eval().requires_grad_(False)
-    accelerator.wait_for_everyone()
-
-    t5_model = FrozenT5Embedder(device=device, cache_dir=args.cache_dir).to(device)
-    accelerator.wait_for_everyone()
 
     lr = 3e-4
     dataset = get_dataloader_laion_coco(args)
@@ -139,49 +116,41 @@ def train(args):
             ema_model_path=args.ema_model_path,
         )
     accelerator.wait_for_everyone()
-    pbar = (
-        tqdm(
-            enumerate(dataset, start=start_step),
-            total=args.total_steps,
-            initial=start_step,
-        )
-        if accelerator.is_main_process
-        else enumerate(dataset, start=start_step)
+    pbar = tqdm(
+        total=args.total_steps,
+        initial=start_step,
     )
     # should we prepare vqmodel, clip_model, t5_model?
     model, optimizer, dataset = accelerator.prepare(model, optimizer, dataset)
     model.train()
     step = 0
     epoch = 0
-    images = images.to(device)
-    for step, (images, captions) in pbar:
-        with torch.no_grad(), torch.autocast("cuda"):
-            image_indices = encode(vqmodel, images)
-            r = torch.rand(images.size(0), device=device)
-            noised_indices, mask = model.module.add_noise(image_indices, r)
 
-            if (
-                np.random.rand() < 0.1
-            ):  # 10% of the times -> unconditional training for classifier-free-guidance
-                text_embeddings = images.new_zeros(images.size(0), 2048)
-                text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
-                # text_embeddings = images.new_zeros(images.size(0), 77, 1024)
-            else:
-                text_tokens = tokenizer.tokenize(captions)
-                text_tokens = text_tokens.to(device)
-                clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
-                clip_embeddings_full = (
-                    generate_clip_embeddings(clip_model, text_tokens).float().to(device)
-                )
-                t5_embeddings_full = t5_model(captions).to(device)
-                text_embeddings = torch.cat(
-                    [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1
-                )
-                text_embeddings_full = torch.cat(
-                    [clip_embeddings_full, t5_embeddings_full], 2
-                )
+    while step < args.total_steps:
+        resp_dict = None
+        try:
+            resp = requests.post(url=URL_BATCH, timeout=5)
+            resp_dict = resp.json()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            continue
+        images = b64_string_to_tensor(resp_dict['images'], device)
+        text_embeddings = b64_string_to_tensor(resp_dict['conditioning_flat'],
+            device)
+        text_embeddings_full = b64_string_to_tensor(resp_dict['conditioning_full'],
+            device)
 
-                # text_embeddings = generate_clip_embeddings(clip_model, text_tokens)
+        image_indices = encode(vqmodel, images)
+
+        r = torch.rand(images.size(0), device=device)
+        noised_indices, mask = model.module.add_noise(image_indices, r)
+
+        if (
+            np.random.rand() < 0.1
+        ):  # 10% of the times -> unconditional training for classifier-free-guidance
+            text_embeddings = images.new_zeros(images.size(0), 2048)
+            text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
 
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         image_indices = image_indices.to(device)
@@ -249,23 +218,19 @@ def train(args):
                     # cool_captions_text = cool_captions_data["captions"]
                     cool_captions_text = args.cool_captions_text
 
-                    text_tokens = tokenizer.tokenize(cool_captions_text)
-                    text_tokens = text_tokens.to(device)
-                    clip_embeddings = (
-                        clip_model.encode_text(text_tokens).float().to(device)
-                    )
-                    clip_embeddings_full = (
-                        generate_clip_embeddings(clip_model, text_tokens)
-                        .float()
-                        .to(device)
-                    )
-                    t5_embeddings_full = t5_model(cool_captions_text).to(device)
-                    cool_captions_embeddings = torch.cat(
-                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1
-                    )
-                    cool_captions_embeddings_full = torch.cat(
-                        [clip_embeddings_full, t5_embeddings_full], 2
-                    )
+                    resp_dict = None
+                    try:
+                        resp = requests.post(url='http://127.0.0.1:4455/conditionings', json={
+                            'captions': cool_captions_text,
+                        }, timeout=5)
+                        resp_dict = resp.json()
+                    except Exception:
+                        import traceback
+                        traceback.print_exc()
+                    cool_captions_embeddings = b64_string_to_tensor(resp_dict['flat'],
+                        device)
+                    cool_captions_embeddings_full = b64_string_to_tensor(resp_dict['full'],
+                        device)
 
                     # cool_captions_embeddings = generate_clip_embeddings(clip_model,
                     #     text_tokens)
@@ -378,13 +343,11 @@ if __name__ == "__main__":
     args.run_name = "paella-0"
     args.model = "UNet"
     args.dataset_type = "webdataset"
-    args.total_steps = 2_000_000
-    args.batch_size = 48 # 22
-    # Be sure to sync with TARGET_SIZE in util
+    args.total_steps = 1_000_000
+    # Be sure to sync with TARGET_SIZE in utils.py and condserver/data.py
     args.image_size = 256
-    args.num_workers = 12
     args.log_period = 5000
-    args.extra_ckpt = 200_000
+    args.extra_ckpt = 100_000
     args.ema = True
     args.ema_decay = 0.9999
     args.ema_update_steps = 500_000
@@ -408,7 +371,8 @@ if __name__ == "__main__":
     args.parallel_init_file = f"file://{parallel_init_dir}/dist_file"
     args.wandb_project = "project"
     args.wandb_entity = "entity"
-    args.cache_dir = "/data/cache"  # cache_dir for models
+    # args.cache_dir = "/data/cache"  # cache_dir for models
+    args.cache_dir = "/home/user/.cache"
     args.offload = False
 
     # Testing:

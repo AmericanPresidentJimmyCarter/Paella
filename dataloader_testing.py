@@ -1,41 +1,33 @@
 import argparse
 import sys
+import requests
 
 import torch
 
-from utils import get_dataloader_laion_coco
+resp_dict = None
+try:
+    resp = requests.post(url='http://127.0.0.1:4455/conditionings', json={
+        'captions': ['foo', 'bar'],
+    })
+    resp_dict = resp.json()
+except Exception:
+    import traceback
+    traceback.print_exc()
+assert resp_dict is not None
+assert 'flat' in resp_dict
+assert 'full' in resp_dict
 
-parser = argparse.ArgumentParser()
-args = parser.parse_args()
-
-args.batch_size = 16 # 22
-args.total_steps = 12345
-args.num_workers = 10
-args.dataset_path = "laion/laion-coco"
-dataset = get_dataloader_laion_coco(args)
-
-batch_iterator = iter(dataset)
-step = 0
-epoch = 0
-while step < args.total_steps:
+for i in range(4):
+    resp_dict = None
     try:
-        images, captions = next(batch_iterator)
-    except StopIteration:
-        epoch += 1
-        print(f"Hit stop iteration, welcome to your next epoch: {epoch + 1}")
-        batch_iterator = iter(dataset)
-        images, captions = next(batch_iterator)
-    except Exception as e:
+        resp = requests.post(url='http://127.0.0.1:4455/batch')
+        resp_dict = resp.json()
+    except Exception:
         import traceback
-
         traceback.print_exc()
-        continue
-    
-    print(len(images), captions)
-    assert isinstance(images[0], torch.Tensor)
-    assert isinstance(images[1], torch.Tensor)
-    assert isinstance(captions[0], str)
-    assert isinstance(captions[1], str)
+    assert resp_dict is not None
+    assert 'images' in resp_dict
+    assert 'conditioning_flat' in resp_dict
+    assert 'conditioning_full' in resp_dict
 
-    print('Test success')
-    sys.exit()
+print('Server appears to be working.')
