@@ -15,7 +15,7 @@ import concurrent.futures
 
 CONNECTIONS = 16
 TIMEOUT = 5
-TARGET_SIZE = 128
+TARGET_SIZE = 256
 
 seed(12345)
 
@@ -309,6 +309,7 @@ def filter_laion_coco_dataset(
     caption_key="TEXT",
     caption_keys=["top_caption", "all_captions"],
     punsafe_key='punsafe',
+    watermark_key='pwatermark',
     height_key='HEIGHT',
     width_key='WIDTH',
 ):
@@ -323,6 +324,10 @@ def filter_laion_coco_dataset(
     if punsafe_key not in item:
         return False
     if item[punsafe_key] is not None and item[punsafe_key] > 0.99:
+        return False
+    if watermark_key not in item:
+        return False
+    if item[watermark_key] is not None and item[watermark_key] > 0.9:
         return False
     if caption_key not in item or item[caption_key] is None:
         return False
