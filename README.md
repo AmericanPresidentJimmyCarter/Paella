@@ -46,8 +46,6 @@ A conditional text-to-image generative model based on [Paella](https://github.co
 
 Weights are forthcoming.
 
-![cover-figure](https://user-images.githubusercontent.com/117442814/201474789-a192f6ab-9626-4402-a3ec-81b8f3fd436c.png)
-
 ## Train your own Paella
 The main file for training will be [paella.py](https://github.com/AmericanPresidentJimmyCarter/Paellaaa). During training we use HF dataset.
 
