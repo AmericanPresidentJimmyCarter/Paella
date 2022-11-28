@@ -62,7 +62,23 @@ def gumbel_sample(t, temperature=1., dim=-1):
     return ((t / max(temperature, 1e-10)) + gumbel_noise(t)).argmax(dim=dim)
 
 
-def sample(model, c, x=None, mask=None, T=12, size=(32, 32), starting_t=0, temp_range=[1.0, 1.0], typical_filtering=True, typical_mass=0.2, typical_min_tokens=1, classifier_free_scale=-1, renoise_steps=11, renoise_mode='start'):
+def sample(
+    model,
+    c,
+    x=None,
+    mask=None,
+    T=12,
+    size=(TARGET_SIZE // 8, TARGET_SIZE // 8),
+    starting_t=0,
+    temp_range=[1.0, 1.0],
+    typical_filtering=True,
+    typical_mass=0.2,
+    typical_min_tokens=1,
+    classifier_free_scale=-1,
+    renoise_steps=11,
+    renoise_mode='start',
+    c_full=None,
+):
     with torch.inference_mode():
         r_range = torch.linspace(0, 1, T+1)[:-1][:, None].expand(-1, c.size(0)).to(c.device)
         temperatures = torch.linspace(temp_range[0], temp_range[1], T)
@@ -76,9 +92,10 @@ def sample(model, c, x=None, mask=None, T=12, size=(32, 32), starting_t=0, temp_
             if renoise_mode == 'prev':
                 prev_x = x.clone()
             r, temp = r_range[i], temperatures[i]
-            logits = model(x, c, r)
+            # print(x.size(), c.size(), r.size(), c_full.size())
+            logits = model(x, c, r, c_full)
             if classifier_free_scale >= 0:
-                logits_uncond = model(x, torch.zeros_like(c), r)
+                logits_uncond = model(x, torch.zeros_like(c), r, torch.zeros_like(c_full))
                 logits = torch.lerp(logits_uncond, logits, classifier_free_scale)
             x = logits
             x_flat = x.permute(0, 2, 3, 1).reshape(-1, x.size(1))

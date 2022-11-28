@@ -13,9 +13,27 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from modules import DenoiseUNet
 from utils import get_dataloader, sample, encode, decode
+from t5 import FrozenT5Embedder
 import open_clip
 from open_clip import tokenizer
 from rudalle import get_vae
+
+
+def generate_clip_embeddings(model, text_tokens) -> torch.Tensor:
+    '''
+    Get the CLIP embedding before feature extraction/normalization.
+    TODO Alter the unet to use this instead of the final squished embedding.
+    '''
+    cast_dtype = model.transformer.get_cast_dtype()
+
+    x = model.token_embedding(text_tokens).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+
+    x = x + model.positional_embedding.to(cast_dtype)
+    x = x.permute(1, 0, 2)  # NLD -> LND
+    x = model.transformer(x, attn_mask=model.attn_mask)
+    x = x.permute(1, 0, 2)  # LND -> NLD
+    x = model.ln_final(x)  # [batch_size, n_ctx, transformer.width]
+    return x
 
 
 def train(proc_id, args):
@@ -69,6 +87,7 @@ def train(proc_id, args):
     )
     del clip_model.visual
     clip_model = clip_model.to(device).eval().requires_grad_(False)
+    t5_model = FrozenT5Embedder(device=device).to(device)
 
     lr = 3e-4
     dataset = get_dataloader(args)
@@ -158,13 +177,19 @@ def train(proc_id, args):
             if (
                 np.random.rand() < 0.1
             ):  # 10% of the times -> unconditional training for classifier-free-guidance
-                text_embeddings = images.new_zeros(images.size(0), 1024)
+                text_embeddings = images.new_zeros(images.size(0), 2048)
+                text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
+                # text_embeddings = images.new_zeros(images.size(0), 77, 1024)
             else:
                 text_tokens = tokenizer.tokenize(captions)
                 text_tokens = text_tokens.to(device)
-                text_embeddings = clip_model.encode_text(text_tokens).float()
+                clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
+                clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float().to(device)
+                t5_embeddings_full = t5_model(captions).to(device)
+                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
+                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
 
-        pred = model(noised_indices, text_embeddings, r)
+        pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         loss = criterion(pred, image_indices)
         loss_adjusted = loss / args.accum_grad
 
@@ -225,9 +250,16 @@ def train(proc_id, args):
 
                     text_tokens = tokenizer.tokenize(cool_captions_text)
                     text_tokens = text_tokens.to(device)
-                    cool_captions_embeddings = clip_model.encode_text(
+                    clip_embeddings = clip_model.encode_text(
                         text_tokens
-                    ).float()
+                    ).float().to(device)
+                    clip_embeddings_full = generate_clip_embeddings(
+                        clip_model, text_tokens).float().to(device)
+                    t5_embeddings_full = t5_model(cool_captions_text).to(device)
+                    cool_captions_embeddings = torch.cat(
+                        [clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                    cool_captions_embeddings_full = torch.cat([clip_embeddings_full,
+                        t5_embeddings_full], 2)
 
                     cool_captions = DataLoader(
                         TensorDataset(
@@ -240,7 +272,8 @@ def train(proc_id, args):
                     st = time.time()
                     for caption_embedding in cool_captions:
                         caption_embedding = caption_embedding[0].float().to(device)
-                        sampled_text = sample(model, c=caption_embedding)  # [-1]
+                        sampled_text = sample(model, c=caption_embedding,
+                            c_full=cool_captions_embeddings_full)  # [-1]
                         sampled_text = decode(vqmodel, sampled_text)
                         # sampled_text_ema = decode(vqmodel, sampled_text_ema)
                         for s in sampled_text:

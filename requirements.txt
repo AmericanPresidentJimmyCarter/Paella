@@ -9,3 +9,8 @@ Pillow
 datasets
 accelerate
 rudalle
+einops
+transformers
+sentencepiece
+cython
+webdataset
