@@ -34,7 +34,7 @@ captions = [
 ]
 
 clip_model, _, _ = open_clip.create_model_and_transforms(
-    "ViT-g-14", pretrained="laion2b_s12b_b42k"
+    "ViT-H-14", pretrained="laion2b_s32b_b79k",
 )
 del clip_model.visual
 clip_model = clip_model.to('cpu').eval().requires_grad_(False)
