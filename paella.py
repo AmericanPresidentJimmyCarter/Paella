@@ -77,7 +77,7 @@ def train(proc_id, args):
         )
         torch.set_num_threads(6)
 
-    model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=1024).to(device)
+    model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
 
     if not proc_id and args.node_id == 0:
         print(f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}")
@@ -186,8 +186,8 @@ def train(proc_id, args):
                 clip_embeddings = clip_model.encode_text(text_tokens).float().to(device)
                 clip_embeddings_full = generate_clip_embeddings(clip_model, text_tokens).float().to(device)
                 t5_embeddings_full = t5_model(captions).to(device)
-                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=2)], 1)
-                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 1)
+                text_embeddings = torch.cat([clip_embeddings, torch.mean(t5_embeddings_full, dim=1)], 1)
+                text_embeddings_full = torch.cat([clip_embeddings_full, t5_embeddings_full], 2)
 
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         loss = criterion(pred, image_indices)
@@ -234,7 +234,8 @@ def train(proc_id, args):
                 image_indices = image_indices[:10]
                 captions = captions[:10]
                 text_embeddings = text_embeddings[:10]
-                sampled = sample(model, c=text_embeddings)  # [-1]
+                sampled = sample(model, c=text_embeddings,
+                    c_full=text_embeddings_full)  # [-1]
                 sampled = decode(vqmodel, sampled)
                 recon_images = decode(vqmodel, image_indices)
 

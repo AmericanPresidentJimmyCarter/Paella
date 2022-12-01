@@ -4,7 +4,10 @@ from torch.utils.data import DataLoader
 from random import randrange
 import numpy as np
 import PIL
+from PIL import Image
+from io import BytesIO
 import math
+from einops import rearrange
 
 TARGET_SIZE = 256
 
@@ -40,13 +43,24 @@ def crop_random(img):
 
 
 def encode(vq, x):
-    print('econde', x.size())
     return vq.model.encode((2 * x - 1))[-1][-1]
 
 
 def decode(vq, z):
-    print('decode', z.size())
     return vq.decode(z.view(z.shape[0], -1))
+
+
+def arr_to_pil(img_arrs):
+    images = []
+    for img_arr in img_arrs:
+        x_sample_c = 255. * rearrange(img_arr.cpu().numpy(),
+            'c h w -> h w c')
+        img = Image.fromarray(x_sample_c.astype(np.uint8))
+        buffered = BytesIO()
+        img.save(buffered, format='PNG')
+
+        images.append(img)
+    return images
 
 
 def log(t, eps=1e-20):
@@ -78,6 +92,8 @@ def sample(
     renoise_steps=11,
     renoise_mode='start',
     c_full=None,
+    c_uncond=None,
+    c_full_uncond=None,
 ):
     with torch.inference_mode():
         r_range = torch.linspace(0, 1, T+1)[:-1][:, None].expand(-1, c.size(0)).to(c.device)
@@ -92,13 +108,41 @@ def sample(
             if renoise_mode == 'prev':
                 prev_x = x.clone()
             r, temp = r_range[i], temperatures[i]
-            # print(x.size(), c.size(), r.size(), c_full.size())
+
+            lfcu = []
+            if classifier_free_scale >= 0 and \
+                c_uncond is not None and \
+                c_full_uncond is not None:
+                # TODO Remove when this is fixed
+                c_uncond = torch.zeros_like(c)
+                c_full_uncond = torch.zeros_like(c_full)
+
+                logits_from_c_uncond_00 = model(x, c_uncond, r, c_full_uncond)
+                logits_from_c_uncond_10 = model(x, c, r, c_full_uncond)
+                logits_from_c_uncond_01 = model(x, c_uncond, r, c_full)
+                lfcu = [logits_from_c_uncond_00, logits_from_c_uncond_10,
+                    logits_from_c_uncond_01]
+
             logits = model(x, c, r, c_full)
-            if classifier_free_scale >= 0:
-                logits_uncond = model(x, torch.zeros_like(c), r, torch.zeros_like(c_full))
-                logits = torch.lerp(logits_uncond, logits, classifier_free_scale)
+
+            if classifier_free_scale >= 0 and len(lfcu) == 0:
+                print('Warning: you are sampling with classifier free guidance ' +
+                    'but you have not provided unconditioned embeddings. ' +
+                    'Please provide c_uncond and c_full_uncond to this ' +
+                    'function.')
+            if classifier_free_scale >= 0 and len(lfcu) > 0:
+                # logits_uncond = model(x, torch.zeros_like(c), r, torch.zeros_like(c_full))
+                # logits = torch.lerp(logits_uncond, logits, classifier_free_scale)
+                logits_00 = logits - lfcu[0]
+                logits_10 = logits - lfcu[1]
+                logits_01 = logits - lfcu[2]
+
+                logits_delta = torch.sum(torch.stack(
+                    [logits_00, logits_10, logits_01]), 0)
+                logits = lfcu[0] + (logits_delta * classifier_free_scale)
             x = logits
             x_flat = x.permute(0, 2, 3, 1).reshape(-1, x.size(1))
+
             if typical_filtering:
                 x_flat_norm = torch.nn.functional.log_softmax(x_flat, dim=-1)
                 x_flat_norm_p = torch.exp(x_flat_norm)
@@ -149,8 +193,7 @@ def preprocess(image):
     image = np.array(image).astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)
     image = torch.from_numpy(image)
-    # print('image', image.size())
-    return 2.0 * image - 1.0
+    return image
 
 
 def collate(batch):
