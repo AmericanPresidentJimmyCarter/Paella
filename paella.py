@@ -32,27 +32,24 @@ def train(args):
         resume = True
     else:
         resume = False
-    if resume and accelerator.is_main_process:
+    if accelerator.is_main_process:
         wandb.init(
             project=args.wandb_project,
             name=args.run_name,
             entity=args.wandb_entity,
             config=vars(args),
         )
-    elif accelerator.is_main_process:
-        wandb.init(
-            project=args.wandb_project,
-            name=args.run_name,
-            entity=args.wandb_entity,
-            config=vars(args),
-        )
-    accelerator.print(f"Starting run '{args.run_name}'....")
+        accelerator.print(f"Starting run '{args.run_name}'....")
+        accelerator.print(f"Batch Size check: {args.n_nodes * args.batch_size * args.accum_grad * len(args.devices)}")
 
     vqmodel = get_vae(cache_dir=args.cache_dir).to(device)
     vqmodel.eval().requires_grad_(False)
+
+    # wait for everyone to load vae
     accelerator.wait_for_everyone()
 
     model = DenoiseUNet(num_labels=args.num_codebook_vectors, c_clip=2048).to(device)
+    # wait for everyone to load model
     accelerator.wait_for_everyone()
 
     accelerator.print(
@@ -60,7 +57,6 @@ def train(args):
     )
 
     lr = 3e-4
-    accelerator.wait_for_everyone()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
@@ -111,17 +107,20 @@ def train(args):
         model_ema = ModelEma(
             model=model,
             decay=args.ema_decay,
-            device=device,
+            device='cpu',
             ema_model_path=args.ema_model_path,
         )
+
     accelerator.wait_for_everyone()
+
     pbar = tqdm(
         total=args.total_steps,
         initial=start_step,
-    )
+    ) if accelerator.is_main_process else None
     # should we prepare vqmodel, clip_model, t5_model?
-    model, optimizer, _, scheduler = accelerator.prepare(model, optimizer,
-        DataLoader(), scheduler)
+    dataset = None
+    model, optimizer, dataset, scheduler = accelerator.prepare(model, optimizer,
+        dataset, scheduler)
     model.train()
     step = 0
     epoch = 0
@@ -167,10 +166,10 @@ def train(args):
 
         accelerator.backward(loss_adjusted)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
-        if (step + 1) % args.accum_grad == 0:
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
 
         acc = (pred.argmax(1) == image_indices).float()
         acc = acc.mean()
@@ -199,7 +198,8 @@ def train(args):
             model_ema.update(model)
             torch.save(model_ema.module, args.ema_model_path)
 
-        if step % args.log_period == 0:
+        # All of this is only done on the main process
+        if step % args.log_period == 0 and accelerator.is_main_process:
             accelerator.print(
                 f"Step {step} - loss {total_loss / (step + 1)} - acc {total_acc / (step + 1)} - ppx {np.exp(total_loss / (step + 1))}"
             )
@@ -337,8 +337,9 @@ def train(args):
         del images, image_indices, r, text_embeddings
         del noised_indices, mask, pred, loss, loss_adjusted, acc
 
-        pbar.update(1)
-        step += 1
+        if accelerator.is_main_process:
+            pbar.update(1)
+            step += 1
 
     accelerator.print(f"Training complete (steps: {step}, epochs: {epoch})")
 
@@ -382,6 +383,10 @@ if __name__ == "__main__":
     # args.cache_dir = "/data/cache"  # cache_dir for models
     args.cache_dir = "/home/user/.cache"
     args.offload = False
+
+    # Right now we step and grad on every thread's batch, so just multiply
+    # the number of steps we want by the number of devices for now.
+    args.total_steps = args.total_steps * len(args.devices)
 
     # Testing:
     # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'
