@@ -28,7 +28,7 @@ URL_CONDITIONING = 'http://127.0.0.1:4455/conditioning'
 
 
 def train(args):
-    if os.path.exists(f"results/{args.run_name}/log.pt"):
+    if os.path.exists(f"results/{args.run_name}/pytorch_model.bin"):
         resume = True
     else:
         resume = False
