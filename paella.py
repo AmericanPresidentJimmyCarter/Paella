@@ -138,7 +138,9 @@ def train(args):
         if 'images' not in resp_dict or \
             'captions' not in resp_dict or \
             'conditioning_flat' not in resp_dict or \
-            'conditioning_full' not in resp_dict:
+            'conditioning_full' not in resp_dict or \
+            'unconditioning_flat' not in resp_dict or \
+            'unconditioning_full' not in resp_dict:
             continue
 
         images = b64_string_to_tensor(resp_dict['images'], device)
@@ -146,6 +148,10 @@ def train(args):
         text_embeddings = b64_string_to_tensor(resp_dict['conditioning_flat'],
             device)
         text_embeddings_full = b64_string_to_tensor(resp_dict['conditioning_full'],
+            device)
+        text_embeddings_uncond = b64_string_to_tensor(resp_dict['unconditioning_flat'],
+            device)
+        text_embeddings_full_uncond = b64_string_to_tensor(resp_dict['unconditioning_full'],
             device)
 
         image_indices = encode(vqmodel, images)
@@ -156,8 +162,12 @@ def train(args):
         if (
             np.random.rand() < 0.1
         ):  # 10% of the times -> unconditional training for classifier-free-guidance
-            text_embeddings = images.new_zeros(images.size(0), 2048)
-            text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
+            # Old method:
+            # text_embeddings = images.new_zeros(images.size(0), 2048)
+            # text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
+            # New method:
+            text_embeddings = text_embeddings_uncond
+            text_embeddings_full = text_embeddings_full_uncond
 
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         image_indices = image_indices.to(device)
@@ -216,7 +226,9 @@ def train(args):
                 text_embeddings = text_embeddings[: args.comparison_samples]
                 text_embeddings_full = text_embeddings_full[: args.comparison_samples]
                 sampled = sample(
-                    model, c=text_embeddings, c_full=text_embeddings_full
+                    model, c=text_embeddings, c_full=text_embeddings_full,
+                    c_uncond=text_embeddings_uncond,
+                    c_full_uncond=text_embeddings_full_uncond,
                 )  # [-1]
                 sampled = decode(vqmodel, sampled)
                 recon_images = decode(vqmodel, image_indices)
@@ -257,6 +269,8 @@ def train(args):
                             model,
                             c=caption_embedding,
                             c_full=cool_captions_embeddings_full,
+                            c_uncond=text_embeddings_uncond,
+                            c_full_uncond=text_embeddings_full_uncond,
                         )  # [-1]
                         sampled_text = decode(vqmodel, sampled_text)
                         # sampled_text_ema = decode(vqmodel, sampled_text_ema)

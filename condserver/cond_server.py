@@ -28,6 +28,8 @@ class ConditioningRequest(BaseModel):
 class ConditioningResponse(BaseModel):
     flat: str
     full: str
+    flat_uncond: str
+    full_uncond: str
 
 
 def spawn_clip_model():
@@ -90,9 +92,23 @@ def captions_to_conditioning_tensors(clip_model, t5_model, captions):
         [clip_embeddings_full, t5_embeddings_full], 2
     )
 
+    text_tokens_uncond = tokenizer.tokenize([''] * len(captions))
+    text_tokens_uncond = text_tokens_uncond.to(device)
+    clip_embeddings_uncond = clip_model.encode_text(text_tokens_uncond).float().to(device)
+    clip_embeddings_full_uncond = generate_clip_embeddings(clip_model, text_tokens_uncond).float().to(device)
+    t5_embeddings_full_uncond = t5_model([''] * len(captions)).to(device)
+    text_embeddings_uncond = torch.cat(
+        [clip_embeddings_uncond, torch.mean(t5_embeddings_full_uncond, dim=1)], 1
+    )
+    text_embeddings_full_uncond = torch.cat(
+        [clip_embeddings_full_uncond, t5_embeddings_full_uncond], 2
+    )
+
     return (
         text_embeddings,
         text_embeddings_full,
+        text_embeddings_uncond,
+        text_embeddings_full_uncond,
     )
 
 
@@ -105,12 +121,14 @@ def conditionings(req: ConditioningRequest) -> ConditioningResponse:
         flat = None
         full = None
         with torch.no_grad():
-            flat, full = \
+            flat, full, flat_uncond, flat_uncond_full = \
                 captions_to_conditioning_tensors(clip_model, t5_model,
                     req.captions)
         resp = ConditioningResponse(
             flat=tensor_to_b64_string(flat),
             full=tensor_to_b64_string(full),
+            flat_uncond=tensor_to_b64_string(flat_uncond),
+            full_uncond=tensor_to_b64_string(flat_uncond_full),
         )
         return resp
     except Exception as e:
