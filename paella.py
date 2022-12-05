@@ -77,26 +77,28 @@ def train(args):
 
     if resume:
         accelerator.print("Loading last checkpoint....")
-        logs = torch.load(f"results/{args.run_name}/log.pt")
-        start_step = logs["step"] + 1
-        losses = logs["losses"]
-        accuracies = logs["accuracies"]
-        total_loss, total_acc = losses[-1] * start_step, accuracies[-1] * start_step
-        model.load_state_dict(
-            torch.load(f"models/{args.run_name}/model.pt", map_location=device)
-        )
-        accelerator.print("Loaded model.")
-        opt_state = torch.load(f"models/{args.run_name}/optim.pt", map_location=device)
-        last_lr = opt_state["param_groups"][0]["lr"]
-        with torch.no_grad():
-            for _ in range(logs["step"]):
-                scheduler.step()
-        accelerator.print(f"Initialized scheduler")
-        accelerator.print(
-            f"Sanity check => Last-LR: {last_lr} == Current-LR: {optimizer.param_groups[0]['lr']} -> {last_lr == optimizer.param_groups[0]['lr']}"
-        )
-        optimizer.load_state_dict(opt_state)
-        del opt_state
+        # logs = torch.load(f"results/{args.run_name}/log.pt")
+        # start_step = logs["step"] + 1
+        # losses = logs["losses"]
+        # accuracies = logs["accuracies"]
+        # total_loss, total_acc = losses[-1] * start_step, accuracies[-1] * start_step
+        # model.load_state_dict(
+        #     torch.load(f"models/{args.run_name}/model.pt", map_location=device)
+        # )
+        # accelerator.print("Loaded model.")
+        # opt_state = torch.load(f"models/{args.run_name}/optim.pt", map_location=device)
+        # last_lr = opt_state["param_groups"][0]["lr"]
+        # with torch.no_grad():
+        #     for _ in range(logs["step"]):
+        #         scheduler.step()
+        # accelerator.print(f"Initialized scheduler")
+        # accelerator.print(
+        #     f"Sanity check => Last-LR: {last_lr} == Current-LR: {optimizer.param_groups[0]['lr']} -> {last_lr == optimizer.param_groups[0]['lr']}"
+        # )
+        # optimizer.load_state_dict(opt_state)
+        # del opt_state
+        accelerator.load_state(f"models/{args.run_name}/")
+
     else:
         losses = []
         accuracies = []
@@ -334,26 +336,32 @@ def train(args):
             del sampled, log_data
 
             if step % args.extra_ckpt == 0:
-                torch.save(
-                    model.state_dict(), f"models/{args.run_name}/model_{step}.pt"
-                )
-                torch.save(
-                    optimizer.state_dict(),
-                    f"models/{args.run_name}/model_{step}_optim.pt",
-                )
-            torch.save(model.state_dict(), f"models/{args.run_name}/model.pt")
-            torch.save(optimizer.state_dict(), f"models/{args.run_name}/optim.pt")
-            torch.save(
-                {"step": step, "losses": losses, "accuracies": accuracies},
-                f"results/{args.run_name}/log.pt",
-            )
+                # torch.save(
+                #     model.state_dict(), f"models/{args.run_name}/model_{step}.pt"
+                # )
+                # torch.save(
+                #     optimizer.state_dict(),
+                #     f"models/{args.run_name}/model_{step}_optim.pt",
+                # )
+                accelerator.save_state(f"models/{args.run_name}/{step}/")
+
+            # torch.save(model.state_dict(), f"models/{args.run_name}/model.pt")
+            # torch.save(optimizer.state_dict(), f"models/{args.run_name}/optim.pt")
+            # torch.save(
+            #     {"step": step, "losses": losses, "accuracies": accuracies},
+            #     f"results/{args.run_name}/log.pt",
+            # )
+            if step % args.write_every_step == 0:
+                accelerator.save_state(f"models/{args.run_name}/")
 
         del images, image_indices, r, text_embeddings
         del noised_indices, mask, pred, loss, loss_adjusted, acc
 
         if accelerator.is_main_process:
-            pbar.update(1)
-            step += 1
+            # This is the main process only, so increment by the number of
+            # devices.
+            pbar.update(len(args.devices))
+            step += len(args.devices)
 
     accelerator.print(f"Training complete (steps: {step}, epochs: {epoch})")
 
@@ -366,11 +374,12 @@ if __name__ == "__main__":
     args.run_name = "paella-0"
     args.model = "UNet"
     args.dataset_type = "webdataset"
-    args.total_steps = 1_000_000
+    args.total_steps = 10_000_000
     # Be sure to sync with TARGET_SIZE in utils.py and condserver/data.py
     args.image_size = 256
-    args.log_period = 5000
+    args.log_period = 2_500
     args.extra_ckpt = 100_000
+    args.write_every_step = 1_000
     args.ema = True
     args.ema_decay = 0.9999
     args.ema_update_steps = 500_000
@@ -397,10 +406,6 @@ if __name__ == "__main__":
     # args.cache_dir = "/data/cache"  # cache_dir for models
     args.cache_dir = "/home/user/.cache"
     args.offload = False
-
-    # Right now we step and grad on every thread's batch, so just multiply
-    # the number of steps we want by the number of devices for now.
-    args.total_steps = args.total_steps * len(args.devices)
 
     # Testing:
     # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'
