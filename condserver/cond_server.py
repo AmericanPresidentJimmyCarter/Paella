@@ -121,14 +121,14 @@ def conditionings(req: ConditioningRequest) -> ConditioningResponse:
         flat = None
         full = None
         with torch.no_grad():
-            flat, full, flat_uncond, flat_uncond_full = \
+            flat, full, flat_uncond, full_uncond = \
                 captions_to_conditioning_tensors(clip_model, t5_model,
                     req.captions)
         resp = ConditioningResponse(
             flat=tensor_to_b64_string(flat),
             full=tensor_to_b64_string(full),
             flat_uncond=tensor_to_b64_string(flat_uncond),
-            full_uncond=tensor_to_b64_string(flat_uncond_full),
+            full_uncond=tensor_to_b64_string(full_uncond),
         )
         return resp
     except Exception as e:

@@ -30,11 +30,6 @@ class BatchResponse(BaseModel):
     unconditioning_full: str
 
 
-class ConditioningResponse(BaseModel):
-    flat: str
-    full: str
-
-
 class Arguments:
     batch_size = 12
     num_workers = 16

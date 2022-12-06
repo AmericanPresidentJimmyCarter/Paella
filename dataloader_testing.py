@@ -16,6 +16,8 @@ except Exception:
 assert resp_dict is not None
 assert 'flat' in resp_dict
 assert 'full' in resp_dict
+assert 'flat_uncond' in resp_dict
+assert 'full_uncond' in resp_dict
 
 for i in range(4):
     resp_dict = None
@@ -30,5 +32,7 @@ for i in range(4):
     assert 'images' in resp_dict
     assert 'conditioning_flat' in resp_dict
     assert 'conditioning_full' in resp_dict
+    assert 'unconditioning_flat' in resp_dict
+    assert 'unconditioning_full' in resp_dict
 
 print('Server appears to be working.')
