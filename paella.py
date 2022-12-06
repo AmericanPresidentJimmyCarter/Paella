@@ -137,11 +137,11 @@ def train(args):
             traceback.print_exc()
             continue
 
-        if 'images' not in resp_dict or resp_dict['images'] is None \
-            'captions' not in resp_dict or resp_dict['captions'] is None \
-            'conditioning_flat' not in resp_dict or resp_dict['conditioning_flat'] is None \
-            'conditioning_full' not in resp_dict or resp_dict['conditioning_full'] is None \
-            'unconditioning_flat' not in resp_dict or resp_dict['unconditioning_flat'] is None \
+        if 'images' not in resp_dict or resp_dict['images'] is None or \
+            'captions' not in resp_dict or resp_dict['captions'] is None or \
+            'conditioning_flat' not in resp_dict or resp_dict['conditioning_flat'] is None or \
+            'conditioning_full' not in resp_dict or resp_dict['conditioning_full'] is None or \
+            'unconditioning_flat' not in resp_dict or resp_dict['unconditioning_flat'] is None or \
             'unconditioning_full' not in resp_dict or resp_dict['unconditioning_full'] is None:
             continue
 
