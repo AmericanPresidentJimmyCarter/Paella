@@ -137,12 +137,12 @@ def train(args):
             traceback.print_exc()
             continue
 
-        if 'images' not in resp_dict or \
-            'captions' not in resp_dict or \
-            'conditioning_flat' not in resp_dict or \
-            'conditioning_full' not in resp_dict or \
-            'unconditioning_flat' not in resp_dict or \
-            'unconditioning_full' not in resp_dict:
+        if 'images' not in resp_dict or resp_dict['images'] is None \
+            'captions' not in resp_dict or resp_dict['captions'] is None \
+            'conditioning_flat' not in resp_dict or resp_dict['conditioning_flat'] is None \
+            'conditioning_full' not in resp_dict or resp_dict['conditioning_full'] is None \
+            'unconditioning_flat' not in resp_dict or resp_dict['unconditioning_flat'] is None \
+            'unconditioning_full' not in resp_dict or resp_dict['unconditioning_full'] is None:
             continue
 
         images = b64_string_to_tensor(resp_dict['images'], device)
@@ -155,6 +155,9 @@ def train(args):
             device)
         text_embeddings_full_uncond = b64_string_to_tensor(resp_dict['unconditioning_full'],
             device)
+        if text_embeddings is None or text_embeddings_full is None or \
+            text_embeddings_uncond is None or text_embeddings_full_uncond is None:
+            continue
 
         image_indices = encode(vqmodel, images)
 
