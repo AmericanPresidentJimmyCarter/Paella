@@ -229,8 +229,8 @@ def train(args):
                 text_embeddings_full = text_embeddings_full[: args.comparison_samples]
                 sampled = sample(
                     model, c=text_embeddings, c_full=text_embeddings_full,
-                    c_uncond=text_embeddings_uncond,
-                    c_full_uncond=text_embeddings_full_uncond,
+                    c_uncond=text_embeddings_uncond[: args.comparison_samples],
+                    c_full_uncond=text_embeddings_full_uncond[: args.comparison_samples],
                 )  # [-1]
                 sampled = decode(vqmodel, sampled)
                 recon_images = decode(vqmodel, image_indices)
@@ -271,8 +271,8 @@ def train(args):
                             model,
                             c=caption_embedding,
                             c_full=cool_captions_embeddings_full,
-                            c_uncond=text_embeddings_uncond,
-                            c_full_uncond=text_embeddings_full_uncond,
+                            c_uncond=text_embeddings_uncond[: len(cool_captions_text)],
+                            c_full_uncond=text_embeddings_full_uncond[: len(cool_captions_text)],
                         )  # [-1]
                         sampled_text = decode(vqmodel, sampled_text)
                         # sampled_text_ema = decode(vqmodel, sampled_text_ema)
@@ -388,16 +388,16 @@ if __name__ == "__main__":
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
-    args.comparison_samples = 8
+    args.comparison_samples = 5
     args.cool_captions_text = [
         "a cat is sleeping",
         "a painting of a clown",
         "a horse",
         "a river bank at sunset",
         "bon jovi playing a sold out show in egypt. you can see the great pyramids in the background",
-        "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
-        "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
-        "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
+        # "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
+        # "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
+        # "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
     ]
     parallel_init_dir = "/data"
     args.parallel_init_file = f"file://{parallel_init_dir}/dist_file"
