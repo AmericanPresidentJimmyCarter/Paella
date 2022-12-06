@@ -28,7 +28,7 @@ URL_CONDITIONING = 'http://127.0.0.1:4455/conditioning'
 
 
 def train(args):
-    if os.path.exists(f"results/{args.run_name}/pytorch_model.bin"):
+    if os.path.exists(f"models/{args.run_name}/pytorch_model.bin"):
         resume = True
     else:
         resume = False
@@ -76,6 +76,9 @@ def train(args):
     )
 
     if resume:
+        losses = []
+        accuracies = []
+        start_step, total_loss, total_acc = 0, 0, 0
         accelerator.print("Loading last checkpoint....")
         # logs = torch.load(f"results/{args.run_name}/log.pt")
         # start_step = logs["step"] + 1
