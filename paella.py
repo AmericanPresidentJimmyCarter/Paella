@@ -75,6 +75,10 @@ def train(args):
         anneal_strategy="linear",
     )
 
+    dataset = None
+    model, optimizer, dataset, scheduler = accelerator.prepare(model, optimizer,
+        dataset, scheduler)
+
     if resume:
         losses = []
         accuracies = []
@@ -123,9 +127,7 @@ def train(args):
         initial=start_step,
     ) if accelerator.is_main_process else None
     # should we prepare vqmodel, clip_model, t5_model?
-    dataset = None
-    model, optimizer, dataset, scheduler = accelerator.prepare(model, optimizer,
-        dataset, scheduler)
+
     model.train()
     step = 0
     epoch = 0
