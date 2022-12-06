@@ -113,8 +113,6 @@ def collate_laion_coco(
     batch,
     caption_key="TEXT",
     caption_keys=["top_caption", "all_captions"],
-    clip_model=None,
-    t5_model=None,
 ):
     images_pil = []
     failure_idxs = []
@@ -163,6 +161,8 @@ def collate_laion_coco(
     captions = [ i['chosen_caption'] for i in final_batch ]
     captions_flat_tensor = None
     captions_full_tensor = None
+    uncaptions_flat_tensor = None
+    uncaptions_full_tensor = None
     try:
         captions_json_resp = requests.post(URL_CONDITIONING,
             json={'captions': captions},
@@ -171,6 +171,8 @@ def collate_laion_coco(
         captions_json = captions_json_resp.json()
         captions_flat_tensor = b64_string_to_tensor(captions_json['flat'])
         captions_full_tensor = b64_string_to_tensor(captions_json['full'])
+        uncaptions_flat_tensor = b64_string_to_tensor(captions_json['flat_uncond'])
+        uncaptions_full_tensor = b64_string_to_tensor(captions_json['full_uncond'])
     except Exception as e:
         print('failed to get caption tensors', e)
         import traceback
@@ -183,6 +185,8 @@ def collate_laion_coco(
         'captions': captions,
         'flat': captions_flat_tensor,
         'full': captions_full_tensor,
+        'flat_uncond': uncaptions_flat_tensor,
+        'full_uncond': uncaptions_full_tensor,
     }
 
 
