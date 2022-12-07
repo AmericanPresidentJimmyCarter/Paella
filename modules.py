@@ -162,6 +162,13 @@ class DenoiseUNet(nn.Module):
                         depth=transformer_depth,
                         context_dim=context_dim,
                     ))
+                    block = ResBlock(
+                        c_levels[i],
+                        c_levels[i],
+                        c_clip + c_r,
+                    )
+                    block.channelwise[-1].weight.data *= np.sqrt(1 / sum(down_levels))
+                    blocks.append(block)
 
             self.down_blocks.append(nn.ModuleList(blocks))
 
@@ -183,7 +190,6 @@ class DenoiseUNet(nn.Module):
                         c_levels_up[i] * 4,
                         (c_clip + c_r), # * 2,
                         c_levels_up[i] if (j == 0 and i > 0) else 0,
-                        c_cond_override= False,#i == len(up_levels) - 1 and j == 0,
                     )
                     block.channelwise[-1].weight.data *= np.sqrt(1 / sum(c_levels_up))
                     blocks.append(block)
@@ -196,6 +202,14 @@ class DenoiseUNet(nn.Module):
                             depth=transformer_depth,
                             context_dim=context_dim,
                         )
+                        blocks.append(block)
+                        block = ResBlock(
+                            c_levels_up[i],
+                            c_levels_up[i],
+                            (c_clip + c_r), # * 2,
+                            0,
+                        )
+                        block.channelwise[-1].weight.data *= np.sqrt(1 / sum(c_levels_up))
                         blocks.append(block)
             if i != len(up_levels) - 1:
                 # print('ConvTranspose2d', c_levels_up[i], c_levels_up[i+1])
