@@ -112,8 +112,8 @@ class DenoiseUNet(nn.Module):
         c_hidden=1280,
         c_clip=2048,
         c_r=64,
-        down_levels=[4, 8, 16, 32],
-        up_levels=[32, 16, 8, 4],
+        down_levels=[4, 8, 16, 32], # 160, 320, 640, 1280
+        up_levels=[32, 16, 8, 4], # 1280, 640, 320, 160
         model_channels=320,
         num_heads=8,
         transformer_depth=1,
@@ -177,16 +177,7 @@ class DenoiseUNet(nn.Module):
             blocks = []
             if i < len(c_levels_up) - 1:
                 for j in range(num_blocks):
-                    if i == len(c_levels_up) - 1:
-                        block = SpatialTransformer(
-                            model_channels,
-                            num_heads,
-                            dim_head,
-                            depth=transformer_depth,
-                            context_dim=context_dim,
-                        )
-                        blocks.append(block)
-
+                    # print('inside j range', i, j)
                     block = ResBlock(
                         c_levels_up[i],
                         c_levels_up[i] * 4,
@@ -196,6 +187,16 @@ class DenoiseUNet(nn.Module):
                     )
                     block.channelwise[-1].weight.data *= np.sqrt(1 / sum(c_levels_up))
                     blocks.append(block)
+
+                    if i == len(c_levels_up) - 2:
+                        block = SpatialTransformer(
+                            model_channels,
+                            num_heads,
+                            dim_head,
+                            depth=transformer_depth,
+                            context_dim=context_dim,
+                        )
+                        blocks.append(block)
             if i != len(up_levels) - 1:
                 # print('ConvTranspose2d', c_levels_up[i], c_levels_up[i+1])
                 blocks.append(
@@ -315,7 +316,9 @@ class DenoiseUNet(nn.Module):
         c,
         r,
         c_full,
-    ):  # r is a uniform value between 0 and 1
+    ):
+        # print('x in', x.size())
+        # r is a uniform value between 0 and 1
         r_embed = self.gen_r_embedding(r)
         x = self.embedding(x).permute(0, 3, 1, 2)
         if len(c.shape) == 2:
@@ -326,8 +329,11 @@ class DenoiseUNet(nn.Module):
             r_embed = r_embed[:, :, None, None].expand(-1, -1, c.size(2), c.size(3))
             s = torch.cat([c, r_embed], dim=1)
         level_outputs = self._down_encode_(x, s, c_full)
+        # print('level outputs', len(level_outputs), level_outputs[0].size())
         x = self._up_decode(level_outputs, s, c_full)
+        # print('level outputs2', x.size())
         x = self.clf(x)
+        # print('level outputs3', x.size())
         return x
 
 
@@ -339,4 +345,6 @@ if __name__ == "__main__":
     c_random = torch.randn((1, 2048)).to(device)
     r_random = torch.rand(1).to(device)
     c_full_random = torch.randn((1, 77, 2048)).to(device)
-    model(x_random, c_random, r_random, c_full_random)
+    # print('x random', x_random.size())
+    out = model(x_random, c_random, r_random, c_full_random)
+    # print('out', out.size())
