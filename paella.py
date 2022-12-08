@@ -58,7 +58,8 @@ def train(args):
 
     lr = 3e-4
     optimizer = optim.AdamW(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    criterion = nn.MSELoss()
 
     if accelerator.is_main_process:
         wandb.watch(model)
