@@ -352,6 +352,7 @@ class DenoiseUNet(nn.Module):
 
 
 if __name__ == "__main__":
+    from utils import gumbel_sample
     device = "cuda"
     model = DenoiseUNet(2048).to(device)
     # print(sum([p.numel() for p in model.parameters()]))
@@ -361,4 +362,9 @@ if __name__ == "__main__":
     c_full_random = torch.randn((1, 77, 2048)).to(device)
     # print('x random', x_random.size())
     out = model(x_random, c_random, r_random, c_full_random)
-    # print('out', out.size())
+    # print('out size', out.size())
+    out_flat = out.permute(0, 2, 3, 1).reshape(-1, out.size(1))
+    out_flat = gumbel_sample(out_flat, temperature=1.0)
+    # print('out_flat size', out_flat.size())
+    out_flat = out_flat.view(out.size(0), *out.shape[2:])
+    # print('out_flat 2', out_flat.size())

@@ -14,6 +14,7 @@ from utils import (
     encode,
     decode,
     b64_string_to_tensor,
+    gumbel_sample,
 )
 
 from rudalle import get_vae
@@ -182,6 +183,9 @@ def train(args):
 
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         image_indices = image_indices.to(device)
+        out_flat = pred.permute(0, 2, 3, 1).reshape(-1, pred.size(1))
+        out_flat = gumbel_sample(out_flat, temperature=1.0)
+        out_flat = out_flat.view(pred.size(0), *pred.shape[2:])
         loss = criterion(pred, image_indices)
         loss_adjusted = loss / args.accum_grad
 
