@@ -208,7 +208,7 @@ def train(args):
         loss = None
         loss_adjusted = None
         acc = None
-        for timestep_r in torch.linspace(0.1, 1.0, args.timesteps):
+        for timestep_r in torch.linspace(0.1, 0.9999999999, args.timesteps):
             image_indices = encode(vqmodel, images)
 
             # r = torch.rand(images.size(0), device=device)
@@ -253,7 +253,7 @@ def train(args):
             del noised_indices, mask, pred, loss, loss_adjusted, acc
 
         # Iterate forwards over the image, with less noise each time.
-        for timestep_r in np.linspace(1.0, 0.1, args.timesteps):
+        for timestep_r in np.linspace(0.9999999999, 0.1, args.timesteps):
             image_indices = encode(vqmodel, images)
 
             # r = torch.rand(images.size(0), device=device)
