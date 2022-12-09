@@ -448,22 +448,22 @@ if __name__ == "__main__":
     args.run_name = "paellaaa-2"
     args.model = "UNet"
     args.dataset_type = "webdataset"
-    args.total_steps = 5_000_000
+    args.total_steps = 2_000_000
     # Be sure to sync with TARGET_SIZE in utils.py and condserver/data.py
     args.batch_size = 44
     args.image_size = 256
-    args.log_period = 200
-    args.extra_ckpt = 50_000
-    args.write_every_step = 100
+    args.log_period = 75
+    args.extra_ckpt = 20_000
+    args.write_every_step = 25
     args.ema = False
     args.ema_decay = 0.9999
     args.ema_update_steps = 50_000
     args.ema_model_path = "ema_weights.ckpt"
-    args.accum_grad = 10.
+    args.accum_grad = 1.
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
-    args.comparison_samples = 8
+    args.comparison_samples = 12
     args.cool_captions_text = [
         "a cat is sleeping",
         "a painting of a clown",
@@ -473,6 +473,8 @@ if __name__ == "__main__":
         "The citizens of Rome rebel against the patricians, believing them to be hoarding all of the food and leaving the rest of the city to starve",
         "King Henry rouses his small, weak, and ill troops, telling them that the less men there are, the more honour they will all receive.",
         "Upon its outward marges under the westward mountains Mordor was a dying land, but it was not yet dead. And here things still grew, harsh, twisted, bitter, struggling for life.",
+        "the power rangers high five a dolphin",
+        "joe biden is surfing a giant wave while holding an ice cream cone",
     ]
     parallel_init_dir = "/data"
     args.parallel_init_file = f"file://{parallel_init_dir}/dist_file"
@@ -483,7 +485,7 @@ if __name__ == "__main__":
     args.offload = False
     args.n_nodes = 1
     args.devices = [0,1,2,3,4,5,6]
-    args.timesteps = 10
+    args.timesteps = 20
 
     # Testing:
     # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'
