@@ -246,11 +246,11 @@ def train(args):
             acc = (pred.argmax(1) == image_indices).float()
             acc = acc.mean()
 
-            total_loss += loss_adjusted.item()
-            total_acc += acc.item()
-
             del image_indices_cloned
             if ts < args.timesteps - 1:
+                total_loss += loss_adjusted.item()
+                total_acc += acc.item()
+
                 del r, out_flat
                 del noised_indices, mask, pred, loss, loss_adjusted, acc
         
