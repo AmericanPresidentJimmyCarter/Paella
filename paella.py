@@ -59,7 +59,7 @@ def train(args):
         f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}"
     )
 
-    lr = 3e-3
+    lr = 5e-4
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     # criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     criterion = nn.MSELoss()
@@ -448,16 +448,16 @@ if __name__ == "__main__":
     args.run_name = "paellaaa-2"
     args.model = "UNet"
     args.dataset_type = "webdataset"
-    args.total_steps = 10_000_000
+    args.total_steps = 2_000_000
     # Be sure to sync with TARGET_SIZE in utils.py and condserver/data.py
     args.batch_size = 44
     args.image_size = 256
-    args.log_period = 500
-    args.extra_ckpt = 100_000
-    args.write_every_step = 100
+    args.log_period = 75
+    args.extra_ckpt = 20_000
+    args.write_every_step = 25
     args.ema = False
     args.ema_decay = 0.9999
-    args.ema_update_steps = 500_000
+    args.ema_update_steps = 50_000
     args.ema_model_path = "ema_weights.ckpt"
     args.accum_grad = 10.
     args.num_codebook_vectors = 8192
