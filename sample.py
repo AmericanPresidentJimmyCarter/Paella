@@ -1,12 +1,12 @@
 import torch
 
 from modules import DenoiseUNet
-from t5 import FrozenT5Embedder
+from condserver.t5 import FrozenT5Embedder
 import open_clip
 from open_clip import tokenizer
 from rudalle import get_vae
 
-from utils import arr_to_pil, sample, decode
+from condserver.data import arr_to_pil, sample, decode
 
 
 def generate_clip_embeddings(clip_model, clip_text_tokens) -> torch.Tensor:
@@ -42,7 +42,7 @@ t5_model = FrozenT5Embedder(device='cpu').to('cpu')
 
 model = DenoiseUNet(8192, c_clip=2048)
 model.load_state_dict(
-    torch.load('pytorch_model.bin', map_location='cuda')
+    torch.load('models/paella-7/pytorch_model.bin', map_location='cuda')
 )
 model = model.to('cuda')
 

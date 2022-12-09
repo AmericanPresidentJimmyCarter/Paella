@@ -17,7 +17,9 @@ assert resp_dict is not None
 assert 'flat' in resp_dict
 assert 'full' in resp_dict
 assert 'flat_uncond' in resp_dict
+print(len(resp_dict['flat_uncond']))
 assert 'full_uncond' in resp_dict
+print(len(resp_dict['full_uncond']))
 
 for i in range(4):
     resp_dict = None
@@ -35,4 +37,9 @@ for i in range(4):
     assert 'unconditioning_flat' in resp_dict
     assert 'unconditioning_full' in resp_dict
 
+print(len(resp_dict['conditioning_flat']))
+print(len(resp_dict['conditioning_full']))
+
+print(len(resp_dict['unconditioning_flat']))
+print(len(resp_dict['unconditioning_full']))
 print('Server appears to be working.')

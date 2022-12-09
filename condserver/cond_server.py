@@ -1,8 +1,9 @@
 import base64
 import io
 from typing import Dict, List, Union
-
-from fastapi import FastAPI, HTTPException
+import ujson
+from fastapi import FastAPI, HTTPException, Response
+# from fastapi.responses import Response
 
 import argparse
 import sys
@@ -18,7 +19,7 @@ from data import tensor_to_b64_string
 
 
 CACHE_DIR = '/fsx/hlky/.cache'
-CONDITIONING_DEVICE = 'cuda:0'
+CONDITIONING_DEVICE = 'cuda:7'
 
 
 class ConditioningRequest(BaseModel):
@@ -113,7 +114,7 @@ def captions_to_conditioning_tensors(clip_model, t5_model, captions):
 
 
 @app.post("/conditionings")
-def conditionings(req: ConditioningRequest) -> ConditioningResponse:
+def conditionings(req: ConditioningRequest) -> Response:
     global clip_model
     global t5_model
 
@@ -124,13 +125,19 @@ def conditionings(req: ConditioningRequest) -> ConditioningResponse:
             flat, full, flat_uncond, full_uncond = \
                 captions_to_conditioning_tensors(clip_model, t5_model,
                     req.captions)
-        resp = ConditioningResponse(
-            flat=tensor_to_b64_string(flat),
-            full=tensor_to_b64_string(full),
-            flat_uncond=tensor_to_b64_string(flat_uncond),
-            full_uncond=tensor_to_b64_string(full_uncond),
-        )
-        return resp
+        # resp = ConditioningResponse(
+        #     flat=tensor_to_b64_string(flat),
+        #     full=tensor_to_b64_string(full),
+        #     flat_uncond=tensor_to_b64_string(flat_uncond),
+        #     full_uncond=tensor_to_b64_string(full_uncond),
+        # )
+        resp = {
+            'flat': tensor_to_b64_string(flat),
+            'full': tensor_to_b64_string(full),
+            'flat_uncond': tensor_to_b64_string(flat_uncond),
+            'full_uncond': tensor_to_b64_string(full_uncond),
+        }
+        return Response(content=ujson.dumps(resp), media_type="application/json")
     except Exception as e:
         import traceback
         traceback.print_exc()

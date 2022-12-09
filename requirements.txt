@@ -19,3 +19,5 @@ accelerate
 uvicorn[standard]
 fastapi
 pydantic
+ujson
+

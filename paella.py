@@ -20,6 +20,8 @@ from utils import (
 from rudalle import get_vae
 from ema import ModelEma
 from accelerate import Accelerator
+from torch.autograd import Variable
+import ujson
 
 accelerator = Accelerator()
 device = accelerator.device
@@ -57,7 +59,7 @@ def train(args):
         f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}"
     )
 
-    lr = 3e-4
+    lr = 3e-3
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     # criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     criterion = nn.MSELoss()
@@ -71,7 +73,7 @@ def train(args):
         optimizer,
         total_steps=args.total_steps,
         max_lr=lr,
-        pct_start=0.1 if not args.finetune else 0.0,
+        pct_start=0.0, # 0.1 if not args.finetune else 0.0,
         div_factor=25,
         final_div_factor=1 / 25,
         anneal_strategy="linear",
@@ -80,6 +82,22 @@ def train(args):
     dataset = None
     model, optimizer, dataset, scheduler = accelerator.prepare(model, optimizer,
         dataset, scheduler)
+
+    '''
+    for scheduler in accelerator._schedulers:
+        # scheduler.scheduler.state_dict().to('cpu')
+        for param in scheduler.scheduler.__dict__.values():
+            if isinstance(param, torch.Tensor):
+                param.data = param.data.to(device)
+                if param._grad is not None:
+                    param._grad.data = param._grad.data.to('cpu')
+    for optimizer in accelerator._optimizers:
+        # optimizer.optimizer.state_dict().to('cpu')
+        for state in optimizer.optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to('cpu')
+    '''
 
     if resume:
         losses = []
@@ -106,12 +124,37 @@ def train(args):
         # )
         # optimizer.load_state_dict(opt_state)
         # del opt_state
-        accelerator.load_state(f"models/{args.run_name}/")
+        # accelerator.load_state(f"models/{args.run_name}/")
 
+        # Fun hack to init weights
+        #
+        unwrapped_model = accelerator.unwrap_model(model)
+        loaded = torch.load(f"models/{args.run_name}/pytorch_model.bin", map_location='cpu')
+        unwrapped_model.load_state_dict(loaded)
+
+        # accelerator.save_state(f"models/{args.run_name}/")
+        # import sys
+        # sys.exit()
     else:
         losses = []
         accuracies = []
         start_step, total_loss, total_acc = 0, 0, 0
+
+    '''
+    for scheduler in accelerator._schedulers:
+        # scheduler.scheduler.state_dict().to('cpu')
+        for param in scheduler.scheduler.__dict__.values():
+            if isinstance(param, torch.Tensor):
+                param.data = param.data.to('cpu')
+                if param._grad is not None:
+                    param._grad.data = param._grad.data.to('cpu')
+    for optimizer in accelerator._optimizers:
+        # optimizer.optimizer.state_dict().to('cpu')
+        for state in optimizer.optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to('cpu')
+    '''
 
     model_ema = None
     if args.ema:
@@ -130,6 +173,10 @@ def train(args):
     ) if accelerator.is_main_process else None
     # should we prepare vqmodel, clip_model, t5_model?
 
+    # dataset = None
+    # model, optimizer, dataset, scheduler = accelerator.prepare(model, optimizer,
+    #     dataset, scheduler)
+
     model.train()
     step = 0
     epoch = 0
@@ -137,8 +184,10 @@ def train(args):
     while step < args.total_steps:
         resp_dict = None
         try:
-            resp = requests.post(url=URL_BATCH, timeout=5)
-            resp_dict = resp.json()
+            resp = requests.post(url=URL_BATCH, json={'is_main': accelerator.is_main_process}, timeout=60)
+            # resp_dict = resp.json()
+            resp.encoding = 'UTF-8'
+            resp_dict = ujson.loads(resp.text)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -162,9 +211,13 @@ def train(args):
             device)
         text_embeddings_full_uncond = b64_string_to_tensor(resp_dict['unconditioning_full'],
             device)
+
         if text_embeddings is None or text_embeddings_full is None or \
             text_embeddings_uncond is None or text_embeddings_full_uncond is None:
             continue
+        # print('TEXT EMBEDS', text_embeddings_uncond.size(), text_embeddings_full_uncond.size())
+        # import sys
+        # sys.exit()
 
         image_indices = encode(vqmodel, images)
 
@@ -183,11 +236,14 @@ def train(args):
 
         pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
         image_indices = image_indices.to(device)
+        image_indices_decoded = decode(vqmodel, image_indices)
         out_flat = pred.permute(0, 2, 3, 1).reshape(-1, pred.size(1))
         out_flat = gumbel_sample(out_flat, temperature=1.0)
         out_flat = out_flat.view(pred.size(0), *pred.shape[2:])
-        loss = criterion(pred, image_indices)
-        loss_adjusted = loss / args.accum_grad
+        pred_decoded = decode(vqmodel, out_flat)
+        loss = criterion(pred_decoded, image_indices_decoded)
+        loss_adjusted = loss * args.accum_grad
+        loss_adjusted = Variable(loss_adjusted, requires_grad=True)
 
         accelerator.backward(loss_adjusted)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
@@ -199,7 +255,7 @@ def train(args):
         acc = (pred.argmax(1) == image_indices).float()
         acc = acc.mean()
 
-        total_loss += loss.item()
+        total_loss += loss_adjusted.item()
         total_acc += acc.item()
         if accelerator.is_main_process:
             log = {
@@ -218,9 +274,10 @@ def train(args):
             model_ema is not None
             and accelerator.is_main_process
             and step % args.ema_update_steps == 0
+            and step != 0
         ):
             accelerator.print(f"EMA weights are being updated and saved ({step=})")
-            model_ema.update(model)
+            model_ema.update(model.module)
             torch.save(model_ema.module, args.ema_model_path)
 
         # All of this is only done on the main process
@@ -241,7 +298,7 @@ def train(args):
                 text_embeddings = text_embeddings[: args.comparison_samples]
                 text_embeddings_full = text_embeddings_full[: args.comparison_samples]
                 sampled = sample(
-                    model, c=text_embeddings, c_full=text_embeddings_full,
+                    model.module, c=text_embeddings, c_full=text_embeddings_full,
                     c_uncond=text_embeddings_uncond[: args.comparison_samples],
                     c_full_uncond=text_embeddings_full_uncond[: args.comparison_samples],
                 )  # [-1]
@@ -257,11 +314,13 @@ def train(args):
                     try:
                         resp = requests.post(url='http://127.0.0.1:4455/conditionings', json={
                             'captions': cool_captions_text,
-                        }, timeout=5)
+                        }, timeout=120)
                         resp_dict = resp.json()
                     except Exception:
                         import traceback
                         traceback.print_exc()
+                        continue
+
                     cool_captions_embeddings = b64_string_to_tensor(resp_dict['flat'],
                         device)
                     cool_captions_embeddings_full = b64_string_to_tensor(resp_dict['full'],
@@ -281,7 +340,7 @@ def train(args):
                     for caption_embedding in cool_captions:
                         caption_embedding = caption_embedding[0].float().to(device)
                         sampled_text = sample(
-                            model,
+                            model.module,
                             c=caption_embedding,
                             c_full=cool_captions_embeddings_full,
                             c_uncond=text_embeddings_uncond[: len(cool_captions_text)],
@@ -317,6 +376,9 @@ def train(args):
                     dim=-2,
                 )
 
+            # if accelerator.is_main_process:
+            #     accelerator.save_state(f"models/{args.run_name}/")
+
             model.train()
 
             torchvision.utils.save_image(
@@ -348,7 +410,7 @@ def train(args):
 
             del sampled, log_data
 
-            if step % args.extra_ckpt == 0:
+            if step % args.extra_ckpt == 0 and step != 0:
                 # torch.save(
                 #     model.state_dict(), f"models/{args.run_name}/model_{step}.pt"
                 # )
@@ -364,8 +426,9 @@ def train(args):
             #     {"step": step, "losses": losses, "accuracies": accuracies},
             #     f"results/{args.run_name}/log.pt",
             # )
-            if step % args.write_every_step == 0:
-                accelerator.save_state(f"models/{args.run_name}/")
+
+        if accelerator.is_main_process and step % args.write_every_step == 0 and step != 0:
+            accelerator.save_state(f"models/{args.run_name}/")
 
         del images, image_indices, r, text_embeddings
         del noised_indices, mask, pred, loss, loss_adjusted, acc
@@ -373,8 +436,8 @@ def train(args):
         if accelerator.is_main_process:
             # This is the main process only, so increment by the number of
             # devices.
-            pbar.update(len(args.devices))
-            step += len(args.devices)
+            pbar.update(1)
+            step += 1
 
     accelerator.print(f"Training complete (steps: {step}, epochs: {epoch})")
 
@@ -384,20 +447,21 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     args = parser.parse_args()
-    args.run_name = "paella-0"
+    args.run_name = "paellaaa-2"
     args.model = "UNet"
     args.dataset_type = "webdataset"
     args.total_steps = 10_000_000
     # Be sure to sync with TARGET_SIZE in utils.py and condserver/data.py
+    args.batch_size = 44
     args.image_size = 256
-    args.log_period = 2_500
+    args.log_period = 500
     args.extra_ckpt = 100_000
-    args.write_every_step = 1_000
-    args.ema = True
+    args.write_every_step = 100
+    args.ema = False
     args.ema_decay = 0.9999
     args.ema_update_steps = 500_000
     args.ema_model_path = "ema_weights.ckpt"
-    args.accum_grad = 1
+    args.accum_grad = 10.
     args.num_codebook_vectors = 8192
     args.log_captions = True
     args.finetune = False
@@ -414,11 +478,13 @@ if __name__ == "__main__":
     ]
     parallel_init_dir = "/data"
     args.parallel_init_file = f"file://{parallel_init_dir}/dist_file"
-    args.wandb_project = "project"
-    args.wandb_entity = "entity"
+    args.wandb_project = "paella-7"
+    args.wandb_entity = "mbabbins"
     # args.cache_dir = "/data/cache"  # cache_dir for models
-    args.cache_dir = "/home/user/.cache"
+    args.cache_dir = "/fsx/hlky/.cache"
     args.offload = False
+    args.n_nodes = 1
+    args.devices = [0,1,2,3,4,5,6]
 
     # Testing:
     # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'

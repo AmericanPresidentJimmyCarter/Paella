@@ -4,7 +4,7 @@ import base64
 import json
 import torchvision
 from torch.utils.data import DataLoader
-from random import choice, randrange, seed
+from random import choice, randrange, seed, randint
 import numpy as np
 import PIL
 import math
@@ -166,7 +166,7 @@ def collate_laion_coco(
     try:
         captions_json_resp = requests.post(URL_CONDITIONING,
             json={'captions': captions},
-            timeout=TIMEOUT)
+            timeout=60)
         assert captions_json_resp.status_code == 200
         captions_json = captions_json_resp.json()
         captions_flat_tensor = b64_string_to_tensor(captions_json['flat'])
@@ -367,7 +367,8 @@ def get_dataloader(args):
 def get_dataloader_laion_coco(args):
     import datasets
     dataset = datasets \
-        .load_dataset(args.dataset_path,split="train", streaming=True) \
+        .load_dataset(args.dataset_path, split="train", streaming=True) \
+        .shuffle(seed=randint(0, 2**32-1)) \
         .filter(filter_laion_coco_dataset)
 
     def _collate(batch):

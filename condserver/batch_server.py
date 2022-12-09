@@ -1,8 +1,8 @@
 import base64
 import io
 from typing import Dict, List, Union
-
-from fastapi import FastAPI, HTTPException
+import ujson
+from fastapi import FastAPI, HTTPException, Response
 
 import argparse
 import sys
@@ -14,11 +14,11 @@ from pydantic import BaseModel
 from data import tensor_to_b64_string, get_dataloader_laion_coco
 
 
-CONDITIONING_DEVICE = 'cuda:0'
+CONDITIONING_DEVICE = 'cuda:7'
 
 
-class ConditioningRequest(BaseModel):
-    captions: List[str]
+class BatchRequest(BaseModel):
+    is_main: bool
 
 
 class BatchResponse(BaseModel):
@@ -31,7 +31,7 @@ class BatchResponse(BaseModel):
 
 
 class Arguments:
-    batch_size = 12
+    batch_size = 44
     num_workers = 16
     dataset_path = "laion/laion-coco"
     # cache_dir = "/home/user/.cache"  # cache_dir for models
@@ -46,26 +46,41 @@ epoch = 0
 app = FastAPI()
 
 @app.post("/batch")
-def batch() -> BatchResponse:
+def batch(req: BatchRequest) -> Response:
     global batch_iterator
     global epoch
 
+    batch_size = Arguments().batch_size
+
     try:
         images, captions = next(batch_iterator)
+        # if req.is_main:
+        #    images = images[0:4]
+        #    captions = captions[0:4]
         flat = captions.get('flat')
         full = captions.get('full')
         flat_uncond = captions.get('flat_uncond')
+        # print('flat', flat_uncond)
         full_uncond = captions.get('full_uncond')
+        # print('full', full_uncond)
         captions = captions.get('captions')
-        resp = BatchResponse(
-            captions=captions,
-            images=tensor_to_b64_string(images),
-            conditioning_flat=tensor_to_b64_string(flat),
-            conditioning_full=tensor_to_b64_string(full),
-            unconditioning_flat=tensor_to_b64_string(flat_uncond),
-            unconditioning_full=tensor_to_b64_string(full_uncond),
-        )
-        return resp
+        # resp = BatchResponse(
+        #     captions=captions,
+        #     images=tensor_to_b64_string(images),
+        #     conditioning_flat=tensor_to_b64_string(flat),
+        #     conditioning_full=tensor_to_b64_string(full),
+        #     unconditioning_flat=tensor_to_b64_string(flat_uncond),
+        #     unconditioning_full=tensor_to_b64_string(full_uncond),
+        # )
+        resp = {
+            'captions': captions,
+            'images': tensor_to_b64_string(images),
+            'conditioning_flat': tensor_to_b64_string(flat),
+            'conditioning_full': tensor_to_b64_string(full),
+            'unconditioning_flat': tensor_to_b64_string(flat_uncond),
+            'unconditioning_full': tensor_to_b64_string(full_uncond),
+        }
+        return Response(content=ujson.dumps(resp), media_type="application/json")
     except StopIteration:
         epoch += 1
         print(f"Hit stop iteration, welcome to your next epoch: {epoch + 1}")
