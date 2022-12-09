@@ -240,6 +240,49 @@ def train(args):
 
                 total_loss += loss_adjusted.item()
                 total_acc += acc.item()
+
+        # Iterate forwards over the image, with less noise each time.
+        for timestep_r in torch.linspace(0., 0.9, args.timesteps):
+            image_indices = encode(vqmodel, images)
+
+            # r = torch.rand(images.size(0), device=device)
+            r = timestep_r.repeat(images.size(0)).to(device)
+            noised_indices, mask = model.module.add_noise(image_indices, r)
+
+            if (
+                np.random.rand() < 0.1
+            ):  # 10% of the times -> unconditional training for classifier-free-guidance
+                # Old method:
+                # text_embeddings = images.new_zeros(images.size(0), 2048)
+                # text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
+                # New method:
+                text_embeddings = text_embeddings_uncond
+                text_embeddings_full = text_embeddings_full_uncond
+
+            pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
+            image_indices = image_indices.to(device)
+            image_indices_decoded = decode(vqmodel, image_indices)
+            out_flat = pred.permute(0, 2, 3, 1).reshape(-1, pred.size(1))
+            out_flat = gumbel_sample(out_flat, temperature=1.0)
+            out_flat = out_flat.view(pred.size(0), *pred.shape[2:])
+            pred_decoded = decode(vqmodel, out_flat)
+            loss = criterion(pred_decoded, image_indices_decoded)
+            loss_adjusted = loss * args.accum_grad
+            loss_adjusted = Variable(loss_adjusted, requires_grad=True)
+
+            accelerator.backward(loss_adjusted)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
+
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+
+            if timestep_r == 0.1:
+                acc = (pred.argmax(1) == image_indices).float()
+                acc = acc.mean()
+
+                total_loss += loss_adjusted.item()
+                total_acc += acc.item()
         
         if accelerator.is_main_process:
             log = {
