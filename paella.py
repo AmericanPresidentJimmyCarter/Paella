@@ -21,6 +21,7 @@ from rudalle import get_vae
 from ema import ModelEma
 from accelerate import Accelerator
 from torch.autograd import Variable
+from nfnets.agc import AGC
 import ujson
 
 accelerator = Accelerator()
@@ -61,6 +62,8 @@ def train(args):
 
     lr = 5e-4
     optimizer = optim.AdamW(model.parameters(), lr=lr)
+    optimizer = AGC(model.parameters(), optimizer, model=model,
+        ignore_agc=['fc'])
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     # criterion = nn.MSELoss()
 
