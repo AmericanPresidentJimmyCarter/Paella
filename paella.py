@@ -199,11 +199,20 @@ def train(args):
         # import sys
         # sys.exit()
         # Iterate backwards over the image, with more noise each time.
+        image_indices_cloned = None
+        r = None
+        out_flat = None
+        noised_indices = None
+        mask = None
+        pred = None
+        loss = None
+        loss_adjusted = None
+        acc = None
         for timestep_r in torch.linspace(0.9, 0., args.timesteps):
             image_indices = encode(vqmodel, images)
 
             # r = torch.rand(images.size(0), device=device)
-            r = timestep_r.repeat(images.size(0)).to(device)
+            r = torch.Tensor([timestep_r]).repeat(images.size(0)).to(device)
             noised_indices, mask = model.module.add_noise(image_indices, r)
 
             if (
@@ -217,8 +226,8 @@ def train(args):
                 text_embeddings_full = text_embeddings_full_uncond
 
             pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
-            image_indices = image_indices.to(device)
-            image_indices_decoded = decode(vqmodel, image_indices)
+            image_indices_cloned = image_indices.clone().to(device)
+            image_indices_decoded = decode(vqmodel, image_indices_cloned)
             out_flat = pred.permute(0, 2, 3, 1).reshape(-1, pred.size(1))
             out_flat = gumbel_sample(out_flat, temperature=1.0)
             out_flat = out_flat.view(pred.size(0), *pred.shape[2:])
@@ -234,19 +243,21 @@ def train(args):
             scheduler.step()
             optimizer.zero_grad()
 
-            if timestep_r == 0.1:
-                acc = (pred.argmax(1) == image_indices).float()
-                acc = acc.mean()
+            acc = (pred.argmax(1) == image_indices).float()
+            acc = acc.mean()
 
-                total_loss += loss_adjusted.item()
-                total_acc += acc.item()
+            total_loss += loss_adjusted.item()
+            total_acc += acc.item()
+
+            del image_indices_cloned, r, out_flat
+            del noised_indices, mask, pred, loss, loss_adjusted, acc
 
         # Iterate forwards over the image, with less noise each time.
-        for timestep_r in torch.linspace(0., 0.9, args.timesteps):
+        for timestep_r in np.linspace(0., 0.9, args.timesteps):
             image_indices = encode(vqmodel, images)
 
             # r = torch.rand(images.size(0), device=device)
-            r = timestep_r.repeat(images.size(0)).to(device)
+            r = torch.Tensor([timestep_r]).repeat(images.size(0)).to(device)
             noised_indices, mask = model.module.add_noise(image_indices, r)
 
             if (
@@ -260,8 +271,8 @@ def train(args):
                 text_embeddings_full = text_embeddings_full_uncond
 
             pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
-            image_indices = image_indices.to(device)
-            image_indices_decoded = decode(vqmodel, image_indices)
+            image_indices_cloned = image_indices.clone().to(device)
+            image_indices_decoded = decode(vqmodel, image_indices_cloned)
             out_flat = pred.permute(0, 2, 3, 1).reshape(-1, pred.size(1))
             out_flat = gumbel_sample(out_flat, temperature=1.0)
             out_flat = out_flat.view(pred.size(0), *pred.shape[2:])
@@ -277,12 +288,16 @@ def train(args):
             scheduler.step()
             optimizer.zero_grad()
 
-            if timestep_r == 0.1:
-                acc = (pred.argmax(1) == image_indices).float()
-                acc = acc.mean()
+            acc = (pred.argmax(1) == image_indices).float()
+            acc = acc.mean()
 
-                total_loss += loss_adjusted.item()
-                total_acc += acc.item()
+            total_loss += loss_adjusted.item()
+            total_acc += acc.item()
+
+            del image_indices_cloned
+            if timestep_r < 0.9:
+                del r, out_flat
+                del noised_indices, mask, pred, loss, loss_adjusted, acc
         
         if accelerator.is_main_process:
             log = {
@@ -457,14 +472,14 @@ def train(args):
         if accelerator.is_main_process and step % args.write_every_step == 0 and step != 0:
             accelerator.save_state(f"models/{args.run_name}/")
 
-        del images, image_indices, r, text_embeddings
-        del noised_indices, mask, pred, loss, loss_adjusted, acc
-
         if accelerator.is_main_process:
             # This is the main process only, so increment by the number of
             # devices.
             pbar.update(1)
             step += 1
+
+        del images, image_indices_cloned, r, out_flat
+        del noised_indices, mask, pred, loss, loss_adjusted, acc
 
     accelerator.print(f"Training complete (steps: {step}, epochs: {epoch})")
 
