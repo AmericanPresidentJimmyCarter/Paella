@@ -478,8 +478,9 @@ def train(args):
             pbar.update(1)
             step += 1
 
-        del images, image_indices_cloned, r, out_flat
+        del images, r, out_flat
         del noised_indices, mask, pred, loss, loss_adjusted, acc
+        del text_embeddings, text_embeddings_full, text_embeddings_uncond, text_embeddings_full_uncond
 
     accelerator.print(f"Training complete (steps: {step}, epochs: {epoch})")
 
