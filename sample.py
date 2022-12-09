@@ -28,9 +28,9 @@ def generate_clip_embeddings(clip_model, clip_text_tokens) -> torch.Tensor:
 
 captions = [
     'a black cat is sleeping',
-    'sunset over ibiza, palm trees are visible on the beach',
-    'a brown shoe',
-    'a blue t-shirt',
+    # 'sunset over ibiza, palm trees are visible on the beach',
+    # 'a brown shoe',
+    # 'a blue t-shirt',
 ]
 
 clip_model, _, _ = open_clip.create_model_and_transforms(
@@ -42,7 +42,7 @@ t5_model = FrozenT5Embedder(device='cpu').to('cpu')
 
 model = DenoiseUNet(8192, c_clip=2048)
 model.load_state_dict(
-    torch.load('models/paella-7/pytorch_model.bin', map_location='cuda')
+    torch.load('models/models/paellaaa-2/pytorch_model.bin', map_location='cuda')
 )
 model = model.to('cuda')
 
