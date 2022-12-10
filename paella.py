@@ -184,16 +184,17 @@ def train(args):
             'unconditioning_full' not in resp_dict or resp_dict['unconditioning_full'] is None:
             continue
 
-        images = b64_string_to_tensor(resp_dict['images'], device)
+        images = b64_string_to_tensor(resp_dict['images'], 'cpu') \
+            .tile((2,1,1,1))[0:args.batch_size].to(device)
         captions = resp_dict['captions']
         text_embeddings = b64_string_to_tensor(resp_dict['conditioning_flat'],
-            device)
+            'cpu').tile((2,1))[0:args.batch_size].to(device)
         text_embeddings_full = b64_string_to_tensor(resp_dict['conditioning_full'],
-            device)
+            'cpu').tile((2,1,1))[0:args.batch_size].to(device)
         text_embeddings_uncond = b64_string_to_tensor(resp_dict['unconditioning_flat'],
-            device)
+            'cpu').tile((2,1))[0:args.batch_size].to(device)
         text_embeddings_full_uncond = b64_string_to_tensor(resp_dict['unconditioning_full'],
-            device)
+            'cpu').tile((2,1,1))[0:args.batch_size].to(device)
 
         if text_embeddings is None or text_embeddings_full is None or \
             text_embeddings_uncond is None or text_embeddings_full_uncond is None:

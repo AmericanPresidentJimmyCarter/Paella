@@ -2,7 +2,7 @@ import torch
 import base64
 import io
 
-TARGET_SIZE = 256
+TARGET_SIZE = 192
 
 def b64_string_to_tensor(s: str, device) -> torch.Tensor:
     tens_bytes = base64.b64decode(s)

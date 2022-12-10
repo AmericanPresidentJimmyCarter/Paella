@@ -31,7 +31,7 @@ class BatchResponse(BaseModel):
 
 
 class Arguments:
-    batch_size = 44
+    batch_size = 96
     num_workers = 16
     dataset_path = "laion/laion-coco"
     # cache_dir = "/home/user/.cache"  # cache_dir for models
@@ -72,6 +72,7 @@ def batch(req: BatchRequest) -> Response:
         #     unconditioning_flat=tensor_to_b64_string(flat_uncond),
         #     unconditioning_full=tensor_to_b64_string(full_uncond),
         # )
+        print(f'Distributing new batch, size {len(images)}')
         resp = {
             'captions': captions,
             'images': tensor_to_b64_string(images),

@@ -18,7 +18,7 @@ import concurrent.futures
 
 CONNECTIONS = 16
 TIMEOUT = 5
-TARGET_SIZE = 256
+TARGET_SIZE = 192
 
 URL_BATCH = 'http://127.0.0.1:4456/batch'
 URL_CONDITIONING = 'http://127.0.0.1:4455/conditionings'
