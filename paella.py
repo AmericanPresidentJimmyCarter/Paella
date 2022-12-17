@@ -60,10 +60,10 @@ def train(args):
         f"Number of Parameters: {sum([p.numel() for p in model.parameters()])}"
     )
 
-    lr = 5e-4
+    lr = 2e-4
     optimizer = optim.AdamW(model.parameters(), lr=lr)
-    optimizer = AGC(model.parameters(), optimizer, model=model,
-        ignore_agc=['fc'])
+    # setattr(optimizer, 'defaults', {})
+    # optimizer = AGC(model.parameters(), optimizer, clipping=2e-2)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     # criterion = nn.MSELoss()
 
@@ -76,7 +76,7 @@ def train(args):
         optimizer,
         total_steps=args.total_steps,
         max_lr=lr,
-        pct_start=0.005, # 0.1 if not args.finetune else 0.0,
+        pct_start=0.05, # 0.1 if not args.finetune else 0.0,
         div_factor=25,
         final_div_factor=1 / 25,
         anneal_strategy="linear",
@@ -127,13 +127,13 @@ def train(args):
         # )
         # optimizer.load_state_dict(opt_state)
         # del opt_state
-        # accelerator.load_state(f"models/{args.run_name}/")
+        accelerator.load_state(f"models/{args.run_name}/")
 
         # Fun hack to init weights
         #
-        unwrapped_model = accelerator.unwrap_model(model)
-        loaded = torch.load(f"models/{args.run_name}/pytorch_model.bin", map_location='cpu')
-        unwrapped_model.load_state_dict(loaded)
+        # unwrapped_model = accelerator.unwrap_model(model)
+        # loaded = torch.load(f"models/{args.run_name}/pytorch_model.bin", map_location='cpu')
+        # unwrapped_model.load_state_dict(loaded)
     else:
         losses = []
         accuracies = []
@@ -164,10 +164,14 @@ def train(args):
     step = 0
     epoch = 0
 
+    # Do less on last GPU.
+    if accelerator.is_last_process:
+        args.batch_size = args.batch_size // 3
+
     while step < args.total_steps:
         resp_dict = None
         try:
-            resp = requests.post(url=URL_BATCH, json={'is_main': accelerator.is_main_process}, timeout=60)
+            resp = requests.post(url=URL_BATCH, json={'is_main': accelerator.is_last_process}, timeout=600)
             # resp_dict = resp.json()
             resp.encoding = 'UTF-8'
             resp_dict = ujson.loads(resp.text)
@@ -184,17 +188,36 @@ def train(args):
             'unconditioning_full' not in resp_dict or resp_dict['unconditioning_full'] is None:
             continue
 
-        images = b64_string_to_tensor(resp_dict['images'], 'cpu') \
-            .tile((2,1,1,1))[0:args.batch_size].to(device)
+        images = b64_string_to_tensor(resp_dict['images'], 'cpu')
+        if images is None:
+            continue
+        images = images.tile((2,1,1,1))[0:args.batch_size].to(device)
+
         captions = resp_dict['captions']
+
         text_embeddings = b64_string_to_tensor(resp_dict['conditioning_flat'],
-            'cpu').tile((2,1))[0:args.batch_size].to(device)
+            'cpu')
+        if text_embeddings is None:
+            continue
+        text_embeddings = text_embeddings.tile((2,1))[0:args.batch_size].to(device)
+
         text_embeddings_full = b64_string_to_tensor(resp_dict['conditioning_full'],
-            'cpu').tile((2,1,1))[0:args.batch_size].to(device)
+            'cpu')
+        if text_embeddings_full is None:
+            continue
+        text_embeddings_full = text_embeddings_full.tile((2,1,1))[0:args.batch_size].to(device)
+
         text_embeddings_uncond = b64_string_to_tensor(resp_dict['unconditioning_flat'],
-            'cpu').tile((2,1))[0:args.batch_size].to(device)
+            'cpu')
+        if text_embeddings_uncond is None:
+            continue
+        text_embeddings_uncond = text_embeddings_uncond.tile((2,1))[0:args.batch_size].to(device)
+
         text_embeddings_full_uncond = b64_string_to_tensor(resp_dict['unconditioning_full'],
-            'cpu').tile((2,1,1))[0:args.batch_size].to(device)
+            'cpu')
+        if text_embeddings_full_uncond is None:
+            continue
+        text_embeddings_full_uncond = text_embeddings_full_uncond.tile((2,1,1))[0:args.batch_size].to(device)
 
         if text_embeddings is None or text_embeddings_full is None or \
             text_embeddings_uncond is None or text_embeddings_full_uncond is None:
@@ -219,6 +242,8 @@ def train(args):
             # r = torch.Tensor([timestep_r]).repeat(images.size(0)).to(device)
             noised_indices, mask = model.module.add_noise(image_indices, r)
 
+            text_flat_for_step = text_embeddings
+            text_full_for_step = text_embeddings_full
             if (
                 np.random.rand() < 0.1
             ):  # 10% of the times -> unconditional training for classifier-free-guidance
@@ -226,11 +251,13 @@ def train(args):
                 # text_embeddings = images.new_zeros(images.size(0), 2048)
                 # text_embeddings_full = images.new_zeros(images.size(0), 77, 2048)
                 # New method:
-                text_embeddings = text_embeddings_uncond
-                text_embeddings_full = text_embeddings_full_uncond
+                text_flat_for_step = text_embeddings_uncond
+                text_full_for_step = text_embeddings_full_uncond
 
-            pred = model(noised_indices, text_embeddings, r, text_embeddings_full)
+            pred = model(noised_indices, text_flat_for_step, r, text_full_for_step)
             loss = criterion(pred, image_indices)
+            loss = torch.clamp(loss, min=0., max=100.)
+            # loss = max(Variable(torch.Tensor([100.0]), requires_grad=True), loss)
             loss_adjusted = loss / args.accum_grad
 
             # MSE: Not working?
@@ -245,7 +272,7 @@ def train(args):
             # loss_adjusted = Variable(loss_adjusted, requires_grad=True)
 
             accelerator.backward(loss_adjusted)
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5).item()
+            grad_norm = accelerator.clip_grad_norm_(model.parameters(), args.max_norm).item()
 
             optimizer.step()
             scheduler.step()
@@ -260,6 +287,7 @@ def train(args):
                 total_acc += acc.item()
 
                 # del out_flat
+                del text_flat_for_step, text_full_for_step
                 del r, noised_indices, mask, pred, loss, loss_adjusted, acc
 
         if accelerator.is_main_process:
@@ -319,7 +347,7 @@ def train(args):
                     try:
                         resp = requests.post(url='http://127.0.0.1:4455/conditionings', json={
                             'captions': cool_captions_text,
-                        }, timeout=120)
+                        }, timeout=600)
                         resp_dict = resp.json()
                     except Exception:
                         import traceback
@@ -442,6 +470,7 @@ def train(args):
             step += 1
 
         # del out_flat
+        del text_flat_for_step, text_full_for_step
         del images, r, noised_indices, mask, pred, loss, loss_adjusted, acc
         del text_embeddings, text_embeddings_full, text_embeddings_uncond, text_embeddings_full_uncond
 
@@ -458,10 +487,10 @@ if __name__ == "__main__":
     args.dataset_type = "webdataset"
     args.total_steps = 2_000_000
     # Be sure to sync with TARGET_SIZE in utils.py and condserver/data.py
-    args.batch_size = 44
-    args.image_size = 256
+    args.batch_size = 112
+    args.image_size = 192
     args.log_period = 75
-    args.extra_ckpt = 20_000
+    args.extra_ckpt = 10_000
     args.write_every_step = 25
     args.ema = False
     args.ema_decay = 0.9999
@@ -494,6 +523,7 @@ if __name__ == "__main__":
     args.n_nodes = 1
     args.devices = [0,1,2,3,4,5,6]
     args.timesteps = 20
+    args.max_norm = 5.
 
     # Testing:
     # args.dataset_path = '/home/user/Programs/Paella/models/6.tar'
@@ -501,3 +531,4 @@ if __name__ == "__main__":
     args.dataset_path = "laion/laion-coco"
     accelerator.print("Launching with args: ", args)
     train(args)
+

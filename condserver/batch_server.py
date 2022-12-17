@@ -31,8 +31,9 @@ class BatchResponse(BaseModel):
 
 
 class Arguments:
-    batch_size = 96
-    num_workers = 16
+    small_batch_size = 42
+    batch_size = 112
+    num_workers = 8
     dataset_path = "laion/laion-coco"
     # cache_dir = "/home/user/.cache"  # cache_dir for models
 
@@ -54,9 +55,7 @@ def batch(req: BatchRequest) -> Response:
 
     try:
         images, captions = next(batch_iterator)
-        # if req.is_main:
-        #    images = images[0:4]
-        #    captions = captions[0:4]
+
         flat = captions.get('flat')
         full = captions.get('full')
         flat_uncond = captions.get('flat_uncond')
@@ -81,6 +80,14 @@ def batch(req: BatchRequest) -> Response:
             'unconditioning_flat': tensor_to_b64_string(flat_uncond),
             'unconditioning_full': tensor_to_b64_string(full_uncond),
         }
+        # if req.is_main:
+        #    resp['captions'] = resp['captions'][0:Arguments().small_batch_size]
+        #    resp['images'] = resp['images'][0:Arguments().small_batch_size]
+        #    resp['conditioning_flat'] = resp['conditioning_flat'][0:Arguments().small_batch_size]
+        #    resp['conditioning_full'] = resp['conditioning_full'][0:Arguments().small_batch_size]
+        #    resp['unconditioning_flat'] = resp['unconditioning_flat'][0:Arguments().small_batch_size]
+        #    resp['unconditioning_full'] = resp['unconditioning_full'][0:Arguments().small_batch_size]
+
         return Response(content=ujson.dumps(resp), media_type="application/json")
     except StopIteration:
         epoch += 1

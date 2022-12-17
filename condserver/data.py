@@ -131,7 +131,9 @@ def collate_laion_coco(
         for future in concurrent.futures.as_completed(future_to_url):
             try:
                 img_tup = future.result()
-                images_pil.append(img_tup)
+                if img_tup[0].size[0] >= TARGET_SIZE and \
+                    img_tup[0].size[1] >= TARGET_SIZE:
+                    images_pil.append(img_tup)
             except Exception as e:
                 # import traceback
                 # traceback.print_exc()
@@ -366,10 +368,24 @@ def get_dataloader(args):
 
 def get_dataloader_laion_coco(args):
     import datasets
+
     dataset = datasets \
         .load_dataset(args.dataset_path, split="train", streaming=True) \
         .shuffle(seed=randint(0, 2**32-1)) \
         .filter(filter_laion_coco_dataset)
+
+    # dataset = datasets \
+    #     .load_dataset(args.dataset_path, split="train", cache_dir='/scratch/cache')
+    # num_shards = 255
+    # shards = [ds.shard(num_shards=num_shards, index=index, contiguous=True) for index in range(num_shards)]
+
+    def gen_from_shards(shards):
+        for shard in shards:
+            for example in shard:
+                yield example
+
+    # dataset_it = datasets.IterableDataset.from_generator(gen_from_shards, gen_kwargs={"shards": shards[:num_shards]}) \
+    #     .filter(filter_laion_coco_dataset)
 
     def _collate(batch):
         return collate_laion_coco(batch)
